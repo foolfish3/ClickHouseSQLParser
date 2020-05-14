@@ -1,6 +1,6 @@
 <?php
 
-namespace CHSQL;
+namespace ClickHouseSQLParser;
 
 class ClickHouseSQLParser
 {
