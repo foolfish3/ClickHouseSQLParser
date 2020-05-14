@@ -1,0 +1,13 @@
+{
+    "name": "foolfish3/clickhousesqlparser",
+	"description": "clickhouse sql parser",
+	"license": "MIT",
+    "require": {
+        "php": ">=5.5"
+	},
+	"autoload": {
+        "psr-4": {
+            "ClickHouseSQLParser\\": "src/"
+        }
+    }
+}
