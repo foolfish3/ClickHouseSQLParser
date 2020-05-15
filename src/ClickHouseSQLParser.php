@@ -101,11 +101,158 @@ class ClickHouseSQLParser
         return \implode($tokens);
     }
 
+    public static function token_to_constant_expr($token)
+    {
+        switch ($token[0]) {
+            case self::T_CONSTANT_NULL:
+                return self::EXP_CONSTANT_NULL();
+            case self::T_CONSTANT_LNUMBER:
+                return  self::EXP_CONSTANT_LNUMBER($token[1]);
+            case self::T_CONSTANT_DNUMBER:
+                return  self::EXP_CONSTANT_DNUMBER($token[1]);
+            case self::T_CONSTANT_ENCAPSED_STRING_SINGLE_QUOTE:
+                return self::EXP_CONSTANT_ENCAPSED_STRING_SINGLE_QUOTE(self::mysql_decode_str($token[1]));
+            default:
+                throw new \ErrorException("BUG");
+        }
+    }
+
+    public static function replace_expr($expr, $replace_expr)
+    {
+        foreach (["join", "on", "using", "alias", "order"] as $key) {
+            unset($replace_expr[$key]);
+            if (isset($expr[$key])) {
+                $replace_expr[$key] = $expr[$key];
+            }
+        }
+        return $replace_expr;
+    }
+
+    protected static function internal_compact_expr(&$expr)
+    {
+        switch ($expr["type"]) {
+            case self::T_FUNCTION:
+                foreach ($expr["sub_tree"] as &$sub_expr) {
+                    self::internal_compact_expr($sub_expr);
+                }
+                unset($sub_expr);
+                switch ($expr["expr"]) {
+                    case "and":
+                        $sub_tree = array();
+                        foreach ($expr["sub_tree"] as $sub_expr) {
+                            if (self::is_expr_of($sub_expr, self::T_FUNCTION) && $sub_expr["expr"] === "and") {
+                                foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
+                                    $sub_tree[] = $sub_sub_expr;
+                                }
+                            } else {
+                                $sub_tree[] = $sub_expr;
+                            }
+                        }
+                        $sub_tree2 = array();
+                        foreach ($sub_tree as $sub_expr) {
+                            if (!self::is_expr_const_true($sub_expr)) {
+                                $sub_tree2[] = $sub_expr;
+                            }
+                        }
+                        if (\count($sub_tree2) == 0) {
+                            $expr = self::replace_expr($expr, self::EXP_CONSTANT_1());
+                        } elseif (\count($sub_tree2) == 1) {
+                            $expr = self::replace_expr($expr, $sub_tree2[0]);
+                        } else {
+                            $expr["sub_tree"] = $sub_tree2;
+                        }
+                        break;
+                    case "or":
+                        $sub_tree = array();
+                        foreach ($expr["sub_tree"] as $sub_expr) {
+                            if (self::is_expr_of($sub_expr, self::T_FUNCTION) && $sub_expr["expr"] === "or") {
+                                foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
+                                    $sub_tree[] = $sub_sub_expr;
+                                }
+                            } else {
+                                $sub_tree[] = $sub_expr;
+                            }
+                        }
+                        $sub_tree2 = array();
+                        foreach ($sub_tree as $sub_expr) {
+                            if (!self::is_expr_const_false($sub_expr)) {
+                                $sub_tree2[] = $sub_expr;
+                            }
+                        }
+                        if (\count($sub_tree2) == 0) {
+                            $expr = self::replace_expr($expr, self::EXP_CONSTANT_0());
+                        } elseif (\count($sub_tree2) == 1) {
+                            $expr = self::replace_expr($expr, $sub_tree2[0]);
+                        } else {
+                            $expr["sub_tree"] = $sub_tree2;
+                        }
+                        break;
+                    case "concat":
+                        $sub_tree = array();
+                        foreach ($expr["sub_tree"] as $sub_expr) {
+                            if (self::is_expr_of($sub_expr, self::T_FUNCTION) && $sub_expr["expr"] === "concat") {
+                                foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
+                                    $sub_tree[] = $sub_sub_expr;
+                                }
+                            } else {
+                                $sub_tree[] = $sub_expr;
+                            }
+                        }
+                        $sub_tree2 = array();
+                        foreach ($sub_tree as $sub_expr) {
+                            if (!self::is_expr_const_empty_string($sub_expr)) {
+                                $sub_tree2[] = $sub_expr;
+                            }
+                        }
+                        if (\count($sub_tree2) == 0) {
+                            $expr = self::replace_expr($expr, self::EXP_CONSTANT_EMPTY_STRING());
+                        } elseif (\count($sub_tree2) == 1) {
+                            $expr = self::replace_expr($expr, $sub_tree2[0]);
+                        } else {
+                            $expr["sub_tree"] = $sub_tree2;
+                        }
+                        break;
+                }
+                break;
+            case self::T_SQL_UNION_ALL:
+                foreach ($expr["sub_tree"] as &$sub_expr) {
+                    self::internal_compact_expr($sub_expr);
+                }
+                break;
+            case self::T_SUBQUERY:
+                self::internal_compact_expr($expr["sub_tree"]);
+                break;
+            case self::T_SQL_SELECT:
+                foreach (["WITH", "SELECT", "FROM", "ARRAYJOIN", "GROUPBY", "ORDERBY"] as $key) {
+                    if (isset($expr[$key])) {
+                        foreach ($expr[$key] as &$sub_expr) {
+                            self::internal_compact_expr($sub_expr);
+                        }
+                    }
+                }
+                foreach (["PREWHERE", "WHERE", "HAVING"] as $key) {
+                    if (isset($expr[$key])) {
+                        self::internal_compact_expr($expr[$key]);
+                    }
+                }
+                break;
+        }
+        foreach (["using"] as $key) {
+            if (isset($expr[$key])) {
+                foreach ($expr[$key] as &$sub_expr) {
+                    self::internal_compact_expr($sub_expr);
+                }
+            }
+        }
+        foreach (["on"] as $key) {
+            if (isset($expr[$key])) {
+                self::internal_compact_expr($expr[$key]);
+            }
+        }
+    }
+
     protected static function convert_expr_name(&$expr)
     {
-        if (!isset($expr)) {
-            return;
-        }
         switch ($expr["type"]) {
             case self::T_FUNCTION:
             case self::T_SQL_UNION_ALL:
@@ -117,7 +264,7 @@ class ClickHouseSQLParser
                 self::convert_expr_name($expr["sub_tree"]);
                 break;
             case self::T_SQL_SELECT:
-                foreach (["WITH", "SELECT", "FROM", "ARRAYJOIN", "GROUPBY", "ORDERBY"] as $key) {
+                foreach (["WITH", "SELECT", "FROM", "ARRAYJOIN", "GROUPBY", "ORDERBY","SETTINGS"] as $key) {
                     if (isset($expr[$key])) {
                         foreach ($expr[$key] as &$sub_expr) {
                             self::convert_expr_name($sub_expr);
@@ -155,7 +302,6 @@ class ClickHouseSQLParser
         }
         return $s;
     }
-
 
     public static function dump_tokens($tokens, $return = false)
     {
@@ -299,8 +445,8 @@ class ClickHouseSQLParser
                 "<=>",
                 "\r\n", "!=", ">=", "<=", "<>", "<<", ">>", ":=", "&&", "||", "@@", "->",
                 "[", "]", "{", "}",
-                ">", "<", "!", "^", "&", "|", "=", "(", ")", "\t", "\r", "\n", " ", "@", ":", "+", "-", "*", "/", "%", ";", ",", ".", ":", "?", "#", "~","$",
-                "\"", "'", "`","\\",
+                ">", "<", "!", "^", "&", "|", "=", "(", ")", "\t", "\r", "\n", " ", "@", ":", "+", "-", "*", "/", "%", ";", ",", ".", ":", "?", "#", "~", "$",
+                "\"", "'", "`", "\\",
                 //support above and: / /* */ -- - ->
             );
             $splitters_map = self::generate_splitter_map($splitters);
@@ -733,6 +879,12 @@ class ClickHouseSQLParser
         return $tokens;
     }
 
+    public static function compact_expr($expr)
+    {
+        self::internal_compact_expr($expr);
+        return $expr;
+    }
+
     public static function parse($sql)
     {
         if (preg_match("{^[\s(]*(?:WITH|SELECT)\s}si", $sql)) {
@@ -764,9 +916,14 @@ class ClickHouseSQLParser
         return $expr;
     }
 
+    protected static function hasAlias($p)
+    {
+        return isset($p["alias"]) && $p["alias"] !== false && $p["alias"] !== '';
+    }
+
     protected static function aliasStr($p)
     {
-        if (!isset($p["alias"]) || $p["alias"] === false || $p["alias"] === '') {
+        if (!self::hasAlias($p)) {
             return "";
         } else {
             return " AS " . self::backquote($p["alias"]);
@@ -782,15 +939,6 @@ class ClickHouseSQLParser
         }
     }
 
-    protected static function finalStr($p)
-    {
-        if (!isset($p["final"]) || $p["final"] === false || $p["final"] === 0) {
-            return "";
-        } else {
-            return " FINAL";
-        }
-    }
-
     protected static function joinStr($p)
     {
         if (!isset($p["join"]) || $p["join"] === false) {
@@ -800,7 +948,8 @@ class ClickHouseSQLParser
         }
     }
 
-    protected static function usingStr($p){
+    protected static function usingStr($p)
+    {
         if (!isset($p["using"]) || $p["using"] === false) {
             return "";
         } else {
@@ -811,15 +960,16 @@ class ClickHouseSQLParser
                 }
                 $s .= self::create($sub);
             }
-            return " USING $s";
+            return " USING ($s)";
         }
     }
 
-    protected static function onStr($p){
+    protected static function onStr($p)
+    {
         if (!isset($p["on"]) || $p["on"] === false || $p["on"] === '') {
             return "";
         } else {
-            return " ON ".self::create($p["on"]);
+            return " ON (" . self::create($p["on"]) . ")";
         }
     }
 
@@ -846,48 +996,156 @@ class ClickHouseSQLParser
         }
     }
 
+    public static function is_expr_const_true($p)
+    {
+        return self::is_expr_of($p, self::T_CONSTANT_LNUMBER) && $p["expr"] !== "0";
+    }
 
-    public static function create($p)
+    public static function is_expr_const_false($p)
+    {
+        return self::is_expr_of($p, self::T_CONSTANT_LNUMBER) && $p["expr"] === "0";
+    }
+
+    public static function is_expr_const_empty_string($p)
+    {
+        return self::is_expr_of($p, self::T_CONSTANT_ENCAPSED_STRING_SINGLE_QUOTE) && $p["expr"] === "";
+    }
+
+    private static function create2($p)
     {
         switch ($p["type"]) {
             case self::T_CONSTANT_NULL:
-                return "NULL";
+                return array("NULL" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_CONSTANT:
             case self::T_CONSTANT_LNUMBER:
             case self::T_CONSTANT_DNUMBER:
+                return array($p["expr"] . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_EXP:
-                return $p["expr"] . self::aliasStr($p) . self::orderStr($p);
+                return array("(" . $p["expr"] . ")" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_CONSTANT_ENCAPSED_STRING_SINGLE_QUOTE:
-                return self::mysql_encode_str($p["expr"]) . self::aliasStr($p) . self::orderStr($p);
+                return array(self::mysql_encode_str($p["expr"]) . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_IDENTIFIER_COLREF:
             case self::T_IDENTIFIER_TABLE:
                 $ss = [];
                 foreach ($p["parts"] as $part) {
                     $ss[] = self::backquote($part, 0, 1);
                 }
-                return self::joinStr($p).\implode(".", $ss) . self::aliasStr($p).self::finalStr($p).self::usingStr($p).self::onStr($p);
+                return array(self::joinStr($p) . \implode(".", $ss) . self::aliasStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_FUNCTION:
-                $s = "";
-                foreach (@$p["sub_tree"] ? $p["sub_tree"] : [] as $k => $sub) {
-                    if ($k !== 0) {
-                        $s .= ",";
+                $func = $p["expr"];
+                if (!isset(self::$precedence_map_replace[$func])) {
+                    $s = "";
+                    foreach (@$p["sub_tree"] ? $p["sub_tree"] : [] as $k => $sub) {
+                        if ($k !== 0) {
+                            $s .= ",";
+                        }
+                        list($str) = self::create2($sub);
+                        $s .= $str;
                     }
-                    $s .= self::create($sub);
+                    return array($p["expr"] . "($s)" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
                 }
-                return $p["expr"] . "($s)" . self::aliasStr($p) . self::orderStr($p);
+                $precedence = self::$precedence_map_replace[$func];
+                $s = "";
+                switch ($func) {
+                    case "equals":
+                    case "notEquals":
+                    case "greater":
+                    case "greaterOrEquals":
+                    case "less":
+                    case "lessOrEquals":
+                    case "like":
+                    case "notLike":
+                    case "plus":
+                    case "minus":
+                    case "multiply":
+                    case "divide":
+                    case "modulo":
+                        list($str, $sub_precedence) = self::create2($p["sub_tree"][0]);
+                        if ($sub_precedence < $precedence) {
+                            $s .= "($str)";
+                        } else {
+                            $s .= "$str";
+                        }
+                        $s .= self::$map1[$func];
+                        list($str, $sub_precedence) = self::create2($p["sub_tree"][1]);
+                        if ($sub_precedence <= $precedence) {
+                            $s .= "($str)";
+                        } else {
+                            $s .= "$str";
+                        }
+                        break;
+                    case "in":
+                    case "notIn":
+                        $val = $p["sub_tree"][0];
+                        if (self::is_expr_of($val, self::T_FUNCTION) && $val["expr"] === "tuple") {
+                            $val["expr"] = "";
+                        }
+                        list($str, $sub_precedence) = self::create2($val);
+                        if ($sub_precedence < $precedence) {
+                            $s .= "($str)";
+                        } else {
+                            $s .= "$str";
+                        }
+                        $s .= self::$map1[$func];
+                        $val = $p["sub_tree"][1];
+                        if (!(self::is_expr_of($val, self::T_FUNCTION) && $val["expr"] === "tuple")) {
+                            throw new \ErrorException("BUG");
+                        }
+                        $s .= "(";
+                        foreach ($val["sub_tree"] as $k => $sub) {
+                            if ($k !== 0) {
+                                $s .= ",";
+                            }
+                            if (self::is_expr_of($sub, self::T_FUNCTION) && $sub["expr"] === "tuple") {
+                                $sub["expr"] = "";
+                            }
+                            list($str) = self::create2($sub);
+                            $s .= $str;
+                        }
+                        $s .= ")";
+                        break;
+                    case "or":
+                    case "and":
+                        $s = "";
+                        foreach ($p["sub_tree"] as $k => $sub) {
+                            if ($k !== 0) {
+                                $s .= self::$map1[$func];
+                            }
+                            list($str, $sub_precedence) = self::create2($sub);
+                            if ($sub_precedence < $precedence) {
+                                $s .= "($str)";
+                            } else {
+                                $s .= "$str";
+                            }
+                        }
+                        break;
+                    case "negate":
+                        list($str, $sub_precedence) = self::create2($p["sub_tree"][0]);
+                        if ($sub_precedence <= $precedence) {
+                            $s .= "(-($str))";
+                        } else {
+                            $s .= "(-$str)";
+                        }
+                        return array($s . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
+                }
+                if (self::hasAlias($p)) {
+                    $s = "($s)";
+                    $precedence = 0;
+                }
+                return array($s . self::aliasStr($p) . self::orderStr($p), $precedence);
             case self::T_SUBQUERY:
-                return self::joinStr($p)."(" . self::create($p["sub_tree"]) . ")" . self::aliasStr($p) . self::orderStr($p).self::usingStr($p).self::onStr($p);
+                return array(self::joinStr($p) . "(" . self::create2($p["sub_tree"])[0] . ")" . self::aliasStr($p) . self::orderStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_SQL_ANY:
-                return $p["expr"];
+                return array($p["expr"], 0);
             case self::T_SQL_UNION_ALL:
                 $s = "";
                 foreach ($p["sub_tree"] as $k => $query) {
                     if ($k != 0) {
                         $s .= " UNION ALL ";
                     }
-                    $s .= "(" . self::create($query) . ")";
+                    $s .= "(" . self::create2($query)[0] . ")";
                 }
-                return $s;
+                return array($s, 100);
             case self::T_SQL_SELECT:
                 $s = "";
                 if (@$p["WITH"]) {
@@ -896,7 +1154,7 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create($expr);
+                        $s .= self::create2($expr)[0];
                     }
                     $s .= " ";
                 }
@@ -911,19 +1169,19 @@ class ClickHouseSQLParser
                     if ($k != 0) {
                         $s .= ",";
                     }
-                    $s .= self::create($expr);
+                    $s .= self::create2($expr)[0];
                 }
                 if (@$p["FROM"]) {
                     $s .= " FROM ";
                     foreach ($p["FROM"] as $expr) {
-                        $s .= self::create($expr);
+                        $s .= self::create2($expr)[0];
                     }
                 }
                 if (@$p["PREWHERE"]) {
-                    $s .= " PREWHERE " . self::create($p["PREWHERE"]);
+                    $s .= " PREWHERE " . self::create2($p["PREWHERE"])[0];
                 }
                 if (@$p["WHERE"]) {
-                    $s .= " WHERE " . self::create($p["WHERE"]);
+                    $s .= " WHERE " . self::create2($p["WHERE"])[0];
                 }
                 if (@$p["GROUPBY"]) {
                     $s .= " GROUP BY ";
@@ -931,11 +1189,11 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create($expr);
+                        $s .= self::create2($expr)[0];
                     }
                 }
                 if (@$p["HAVING"]) {
-                    $s .= " HAVING " . self::create($p["HAVING"]);
+                    $s .= " HAVING " . self::create2($p["HAVING"])[0];
                 }
                 if (@$p["ORDERBY"]) {
                     $s .= " ORDER BY ";
@@ -943,7 +1201,7 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create($expr);
+                        $s .= self::create2($expr)[0];
                     }
                 }
                 if (@$p["LIMITBY"]) {
@@ -956,7 +1214,7 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create($expr);
+                        $s .= self::create2($expr)[0];
                     }
                 }
                 if (@$p["LIMIT"]) {
@@ -966,10 +1224,27 @@ class ClickHouseSQLParser
                     }
                     $s .= $p["LIMIT"]["row_count"];
                 }
-                return $s;
+
+                if (@$p["SETTINGS"]) {
+                    $s .= " SETTINGS ";
+                    $k = 0;
+                    foreach ($p["SETTINGS"] as $key => $expr) {
+                        if ($k++ != 0) {
+                            $s .= ",";
+                        }
+                        $s .= "$key=" . self::create2($expr)[0];
+                    }
+                }
+
+                return array($s, 0);
             default:
                 throw new \ErrorException("BUG");
         }
+    }
+
+    public static function create($p)
+    {
+        return self::create2($p)[0];
     }
 
     public static function EXP_FUNCTION($name, $sub_tree = [])
@@ -984,6 +1259,30 @@ class ClickHouseSQLParser
     public static function EXP_CONSTANT_NULL()
     {
         return array("type" => self::T_CONSTANT_NULL);
+    }
+
+    public static function EXP_CONSTANT_1()
+    {
+        return array(
+            "type" => self::T_CONSTANT_LNUMBER,
+            "expr" => "1",
+        );
+    }
+
+    public static function EXP_CONSTANT_0()
+    {
+        return array(
+            "type" => self::T_CONSTANT_LNUMBER,
+            "expr" => "0",
+        );
+    }
+
+    public static function EXP_CONSTANT_EMPTY_STRING()
+    {
+        return array(
+            "type" => self::T_CONSTANT_ENCAPSED_STRING_SINGLE_QUOTE,
+            "expr" => "",
+        );
     }
 
     public static function EXP_CONSTANT_LNUMBER($num)
@@ -1019,7 +1318,7 @@ class ClickHouseSQLParser
         );
     }
 
-    protected static $precedence_map=array(
+    protected static $precedence_map = array(
         "or" => 1,
         "and" => 2,
         "not" => 3,
@@ -1033,7 +1332,7 @@ class ClickHouseSQLParser
         "notLike" => 5,
         "in" => 5,
         "notIn" => 5,
-        "concat"=>6,
+        "concat" => 6,
         "plus" => 7,
         "minus" => 7,
         "multiply" => 8,
@@ -1042,24 +1341,65 @@ class ClickHouseSQLParser
         "negate" => 9,
     );
 
+    protected static $precedence_map_replace = array(
+        "or" => 1,
+        "and" => 2,
+        "equals" => 5,
+        "notEquals" => 5,
+        "greater" => 5,
+        "greaterOrEquals" => 5,
+        "less" => 5,
+        "lessOrEquals" => 5,
+        "like" => 5,
+        "notLike" => 5,
+        "in" => 5,
+        "notIn" => 5,
+        "plus" => 7,
+        "minus" => 7,
+        "multiply" => 8,
+        "divide" => 8,
+        "modulo" => 8,
+        "negate" => 9,
+    );
+
+    protected static $map1 = array(
+        "equals" => "=",
+        "notEquals" => "!=",
+        "greater" => ">",
+        "greaterOrEquals" => ">=",
+        "less" => "%",
+        "lessOrEquals" => "<=",
+        "like" => "%",
+        "notLike" => " NOT LIKE ",
+        "plus" => "+",
+        "minus" => "-",
+        "multiply" => "*",
+        "divide" => "/",
+        "modulo" => "%",
+        "and" => " AND ",
+        "or" => " OR ",
+        "in" => " IN ",
+        "notIn" => " NOT IN ",
+    );
+
     protected static function get_next_expr($tokens, $index, $precedence)
     {
         $m2 = array( //2元操作符
             "OR" => "or", "AND" => "and",
             "=" => "equals", "!=" => "notEquals", "<>" => "notEquals", ">" => "greater", ">=" => "greaterOrEquals", "<" => "less", "<=" => "lessOrEquals",
             "LIKE" => "like",
-            "+" => "plus", "-" => "minus", "*" => "multiply", "%" => "modulo", "/" => "divide", "||"=>"concat",
+            "+" => "plus", "-" => "minus", "*" => "multiply", "%" => "modulo", "/" => "divide", "||" => "concat",
         );
         $token = @$tokens[$index];
-        if (self::is_token_of($token, "+")) {//忽略
-            if(self::$precedence_map["negate"]<=$precedence){
+        if (self::is_token_of($token, "+")) { //忽略
+            if (self::$precedence_map["negate"] <= $precedence) {
                 throw new \ErrorException("unexpect token " . self::token_to_string($token));
             }
             list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["negate"]);
-        }elseif (self::is_token_of($token, "-")) {
+        } elseif (self::is_token_of($token, "-")) {
             list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["negate"]);
             if (self::is_expr_of($val1, self::T_CONSTANT_NUMBER) && $val1["expr"][0] !== "-") {
-                if($val1["expr"]!=="0"){
+                if ($val1["expr"] !== "0") {
                     $val1["expr"] =   "-" . $val1["expr"];
                 }
             } else {
@@ -1088,30 +1428,21 @@ class ClickHouseSQLParser
                 $index++;
             }
             $val1 = self::EXP_FUNCTION("array", $sub_tree);
-        } elseif (self::is_token_of($token, self::T_CONSTANT_NULL)) {
-            $val1 = self::EXP_CONSTANT_NULL();
-            $index++;
-        } elseif (self::is_token_of($token, self::T_CONSTANT_LNUMBER)) {
-            $val1 = self::EXP_CONSTANT_LNUMBER($token[1]);
-            $index++;
-        } elseif (self::is_token_of($token, self::T_CONSTANT_DNUMBER)) {
-            $val1 = self::EXP_CONSTANT_DNUMBER($token[1]);
-            $index++;
-        } elseif (self::is_token_of($token, self::T_CONSTANT_ENCAPSED_STRING_SINGLE_QUOTE)) {
-            $val1 = self::EXP_CONSTANT_ENCAPSED_STRING_SINGLE_QUOTE(self::mysql_decode_str($token[1]));
+        } elseif (self::is_token_of($token, self::T_CONSTANT)) {
+            $val1 = self::token_to_constant_expr($token);
             $index++;
         } elseif (self::is_token_of($token, "NOT")) {
             list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["not"]);
             $val1 = self::EXP_FUNCTION("not", [$val1]);
         } elseif (self::is_token_of($token, "INTERVAL")) {
-            list($val1, $index) = self::get_next_expr($tokens, $index + 1,0);
+            list($val1, $index) = self::get_next_expr($tokens, $index + 1, 0);
             $token = @$tokens[$index];
-            if(!(\is_array($token) && isset(self::$interval_map[\strtoupper($token[1])]))){
+            if (!(\is_array($token) && isset(self::$interval_map[\strtoupper($token[1])]))) {
                 throw new \ErrorException("expect SECOND MINUTE HOUR DAY WEEK MONTH QUARTER YEAR got " . self::token_to_string($token));
             }
             $val1 = self::EXP_FUNCTION(self::$interval_map[\strtoupper($token[1])], [$val1]);
             $index++;
-        }elseif (self::is_token_of($token, "WITH") || self::is_token_of($token, "SELECT")) {
+        } elseif (self::is_token_of($token, "WITH") || self::is_token_of($token, "SELECT")) {
             list($val1, $index) = self::get_next_select($tokens, $index);
             $val1 = array("type" => self::T_SUBQUERY, "expr" => "", "sub_tree" => $val1);
         } elseif (self::is_token_of($token, self::T_IDENTIFIER)) { //SELECT/WITH
@@ -1136,21 +1467,21 @@ class ClickHouseSQLParser
                             list($expr, $index) = self::get_next_expr($tokens, $index, 0);
                             $token = @$tokens[$index];
                             if ($token === "->") {
-                                if(!self::is_expr_of($expr,self::T_FUNCTION)){
-                                    $sub_tree[]=$expr;
+                                if (!self::is_expr_of($expr, self::T_FUNCTION)) {
+                                    $sub_tree[] = $expr;
                                     $expr = self::EXP_FUNCTION('tuple', $sub_tree);
-                                    $sub_tree=[];
+                                    $sub_tree = [];
                                 }
-                                if($expr["expr"]!=="tuple"){
+                                if ($expr["expr"] !== "tuple") {
                                     throw new \ErrorException("expect IDENTIFIER before -> ");
                                 }
-                                foreach($expr["sub_tree"] as $e){
+                                foreach ($expr["sub_tree"] as $e) {
                                     if (!self::is_expr_of($e, self::T_IDENTIFIER_COLREF) || \count($e["parts"]) != 1) {
                                         throw new \ErrorException("expect PARAM NAME got " . self::create($e));
                                     }
                                 }
-                                list($expr2, $index) = self::get_next_expr($tokens, $index+1, 0);
-                                $expr=self::EXP_FUNCTION("lambda",[$expr,$expr2]);
+                                list($expr2, $index) = self::get_next_expr($tokens, $index + 1, 0);
+                                $expr = self::EXP_FUNCTION("lambda", [$expr, $expr2]);
                                 $token = @$tokens[$index];
                             }
                             if ($token === ")") {
@@ -1232,6 +1563,9 @@ class ClickHouseSQLParser
                     continue;
                 }
             } elseif (self::is_token_of($token, "AS")) {
+                if (0 < $precedence) {
+                    return array($val1, $index);
+                }
                 $token = @$tokens[++$index];
                 if (!self::is_token_of($token, self::T_IDENTIFIER)) {
                     throw new \ErrorException("expect IDENTIFIER got " . self::token_to_string($token));
@@ -1378,53 +1712,49 @@ class ClickHouseSQLParser
         throw new \ErrorException("BUG");
     }
 
-    protected static $interval_map=array(
-        "SECOND"=>"toIntervalSecond",
-        "MINUTE"=>"toIntervalMinute",
-        "HOUR"=>"toIntervalHour",
-        "DAY"=>"toIntervalDay",
-        "WEEK"=>"toIntervalWeek",
-        "MONTH"=>"toIntervalMonth",
-        "QUARTER"=>"toIntervalQuarter",
-        "YEAR"=>"toIntervalYear",
+    protected static $interval_map = array(
+        "SECOND" => "toIntervalSecond",
+        "MINUTE" => "toIntervalMinute",
+        "HOUR" => "toIntervalHour",
+        "DAY" => "toIntervalDay",
+        "WEEK" => "toIntervalWeek",
+        "MONTH" => "toIntervalMonth",
+        "QUARTER" => "toIntervalQuarter",
+        "YEAR" => "toIntervalYear",
     );
 
-    protected static $keywords_map=array(
-        "WITH"=>1,
-        "SELECT"=>1,
-        "FROM"=>1,
-        "FINAL"=>1,
-        "HAVING"=>1,
-        "WHERE"=>1,
-        "PREWHERE"=>1,
-        "ORDER"=>1,
-        "LIMIT"=>1,
-        "CROSS"=>1,
-        "INNER"=>1,
-        "LEFT" =>1,
-        "RIGHT"=>1,
-        "FULL" =>1,
-        "JOIN" =>1,
-        "ON"=>1,
-        "USING"=>1,
+    protected static $keywords_map = array(
+        "WITH" => 1,
+        "SELECT" => 1,
+        "FROM" => 1,
+        "FINAL" => 1,
+        "HAVING" => 1,
+        "WHERE" => 1,
+        "PREWHERE" => 1,
+        "ORDER" => 1,
+        "LIMIT" => 1,
+        "CROSS" => 1,
+        "INNER" => 1,
+        "LEFT" => 1,
+        "RIGHT" => 1,
+        "FULL" => 1,
+        "JOIN" => 1,
+        "ON" => 1,
+        "USING" => 1,
     );
 
-    protected static function is_token_keyword($token){
+    protected static function is_token_keyword($token)
+    {
         return \is_array($token) && isset(self::$keywords_map[\strtoupper($token[1])]);
     }
 
-    //[FINAL] [GLOBAL] [ANY|ALL] [SAMPLE] [WITH TOTALS] [INTO OUTFILE filename] [FORMAT format] [Conditional Operator]  不支持
-    //TODO 增加对settings支持
-    //TODO AND OR CONCAT 结构变更
-    //create的时候考虑操作符号变更
+    //[FINAL] [GLOBAL] [ANY|ALL] [SAMPLE] [WITH TOTALS] [INTO OUTFILE filename] [FORMAT format] [Conditional Operator] 不支持
     protected static function get_next_select($tokens, $index)
     {
-        
+
         $obj = array();
         $obj["type"] = self::T_SQL_SELECT;
         $obj["SELECT"] = array();
-        //$obj["PREWHERE"]=array();
-        //$obj["WHERE"]=array();
         $token = @$tokens[$index];
         if (self::is_token_of($token, "WITH")) {
             $obj["WITH"] = array();
@@ -1452,29 +1782,29 @@ class ClickHouseSQLParser
         }
         for (;;) {
             list($expr, $index) = self::get_next_expr($tokens, $index, 0);
-F1:         $token = @$tokens[$index];
+            F1: $token = @$tokens[$index];
             if ($token === ",") {
                 $obj["SELECT"][] = $expr;
                 $index++;
-            }elseif(!isset($expr["alias"]) && self::is_token_of($token,self::T_IDENTIFIER) && !self::is_token_keyword($token)){
-                $expr["alias"]=self::parse_colref($token[1])[0];
+            } elseif (!isset($expr["alias"]) && self::is_token_of($token, self::T_IDENTIFIER) && !self::is_token_keyword($token)) {
+                $expr["alias"] = self::parse_colref($token[1])[0];
                 $index++;
                 goto F1;
-            }else {
+            } else {
                 $obj["SELECT"][] = $expr;
                 break;
             }
         }
         $token = @$tokens[$index]; //FROM
-        if (self::is_token_of($token, "FROM")) { //TODO array join
+        if (self::is_token_of($token, "FROM")) {
             $obj["FROM"] = array();
             list($expr, $index) = self::get_next_expr($tokens, $index + 1, 0);
             if (self::is_expr_of($expr, self::T_IDENTIFIER_COLREF)) {
                 $expr["type"] = self::T_IDENTIFIER_TABLE;
             }
             $token = @$tokens[$index];
-            if(!isset($expr["alias"]) && self::is_token_of($token,self::T_IDENTIFIER) && !self::is_token_keyword($token)){
-                $expr["alias"]=self::parse_colref($token[1])[0];
+            if (!isset($expr["alias"]) && self::is_token_of($token, self::T_IDENTIFIER) && !self::is_token_keyword($token)) {
+                $expr["alias"] = self::parse_colref($token[1])[0];
                 $index++;
                 $token = @$tokens[$index];
             }
@@ -1505,58 +1835,58 @@ F1:         $token = @$tokens[$index];
                     }
                 }
             }
-            for(;;){
-                if(self::is_token_of($token,"INNER")){
+            for (;;) {
+                if (self::is_token_of($token, "INNER")) {
                     $token = @$tokens[++$index];
-                    if(!self::is_token_of($token,"JOIN")){
+                    if (!self::is_token_of($token, "JOIN")) {
                         throw new \ErrorException("expect 'JOIN' after 'INNER' got " . self::token_to_string($token));
                     }
                 }
-                if(self::is_token_of($token,"JOIN")){
-                    $join_type="INNER";
-                }elseif(self::is_token_of($token,"CROSS")){
-                    $join_type="CROSS";
+                if (self::is_token_of($token, "JOIN")) {
+                    $join_type = "INNER";
+                } elseif (self::is_token_of($token, "CROSS")) {
+                    $join_type = "CROSS";
                     $token = @$tokens[++$index];
-                    if(!self::is_token_of($token,"JOIN")){
+                    if (!self::is_token_of($token, "JOIN")) {
                         throw new \ErrorException("expect 'JOIN' after 'CROSS' got " . self::token_to_string($token));
                     }
-                }elseif(self::is_token_of($token,",")){
-                    $join_type="CROSS";
-                }else{
-                    if(self::is_token_of($token,"LEFT")){
-                        $join_type="LEFT";
-                    }elseif(self::is_token_of($token,"RIGHT")){
-                        $join_type="RIGHT";
-                    }elseif(self::is_token_of($token,"FULL")){
-                        $join_type="FULL";
-                    }else{
+                } elseif (self::is_token_of($token, ",")) {
+                    $join_type = "CROSS";
+                } else {
+                    if (self::is_token_of($token, "LEFT")) {
+                        $join_type = "LEFT";
+                    } elseif (self::is_token_of($token, "RIGHT")) {
+                        $join_type = "RIGHT";
+                    } elseif (self::is_token_of($token, "FULL")) {
+                        $join_type = "FULL";
+                    } else {
                         break;
                     }
                     $token = @$tokens[++$index];
-                    if(self::is_token_of($token,"OUTER")){
+                    if (self::is_token_of($token, "OUTER")) {
                         $token = @$tokens[++$index];
                     }
-                    if(!self::is_token_of($token,"JOIN")){
+                    if (!self::is_token_of($token, "JOIN")) {
                         throw new \ErrorException("expect 'JOIN' after '$join_type' got " . self::token_to_string($token));
                     }
                 }
                 list($expr, $index) = self::get_next_expr($tokens, $index + 1, 0);
-                $expr["join"]=$join_type;
+                $expr["join"] = $join_type;
                 if (self::is_expr_of($expr, self::T_IDENTIFIER_COLREF)) {
                     $expr["type"] = self::T_IDENTIFIER_TABLE;
                 }
                 $token = @$tokens[$index];
-                if(!isset($expr["alias"]) && self::is_token_of($token,self::T_IDENTIFIER) && !self::is_token_keyword($token)){
-                    $expr["alias"]=self::parse_colref($token[1])[0];
+                if (!isset($expr["alias"]) && self::is_token_of($token, self::T_IDENTIFIER) && !self::is_token_keyword($token)) {
+                    $expr["alias"] = self::parse_colref($token[1])[0];
                     $index++;
                     $token = @$tokens[$index];
                 }
-                if($join_type==="CROSS"){
+                if ($join_type === "CROSS") {
                     $obj["FROM"][] = $expr;
                     continue;
                 }
-                if(self::is_token_of($token,"USING")){
-                    $expr["using"]=array();
+                if (self::is_token_of($token, "USING")) {
+                    $expr["using"] = array();
                     $index++;
                     for (;;) {
                         list($expr2, $index) = self::get_next_expr($tokens, $index, 0);
@@ -1568,10 +1898,10 @@ F1:         $token = @$tokens[$index];
                             break;
                         }
                     }
-                }elseif(self::is_token_of($token,"ON")){
+                } elseif (self::is_token_of($token, "ON")) {
                     list($expr2, $index) = self::get_next_expr($tokens, $index + 1, 0);
                     $expr["on"] = $expr2;
-                }else{
+                } else {
                     throw new \ErrorException("expect 'USING' or 'ON' after '$join_type' got " . self::token_to_string($token));
                 }
                 $obj["FROM"][] = $expr;
@@ -1703,11 +2033,36 @@ F1:         $token = @$tokens[$index];
                 "offset" => $offset, "row_count" => $row_count
             );
         }
+
+        $token = @$tokens[$index];
+        if (self::is_token_of($token, "SETTINGS")) {
+            $obj["SETTINGS"] = array();
+            $index++;
+            for (;;) {
+                $token = @$tokens[$index];
+                if (!self::is_token_of($token, self::T_IDENTIFIER_NOQUOTE)) {
+                    throw new \ErrorException("expect (IDENTIFIER) after 'SETTINGS' got " . self::token_to_string($token));
+                }
+                $key = $token[1];
+                $token = @$tokens[++$index];
+                if (!self::is_token_of($token, "=")) {
+                    throw new \ErrorException("expect '=' after 'SETTINGS' got " . self::token_to_string($token));
+                }
+                $token = @$tokens[++$index];
+                if (!self::is_token_of($token, self::T_CONSTANT)) {
+                    throw new \ErrorException("expect (CONSTANT) after 'SETTINGS' got " . self::token_to_string($token));
+                }
+                $obj["SETTINGS"][$key] = self::token_to_constant_expr($token);
+                $token = @$tokens[++$index];
+                if ($token === ",") {
+                    $index++;
+                } else {
+                    break;
+                }
+            }
+        }
         return array($obj, $index);
     }
 }
 
-$p = ClickHouseSQLParser::parse("select 1 from a,b ");
-ClickHouseSQLParser::dump_expr($p);
-echo ClickHouseSQLParser::create($p);
-//var_dump(ClickHouseSQLParser::parse_colref(" `ab\\` `. a.\"ssss\" "));
+
