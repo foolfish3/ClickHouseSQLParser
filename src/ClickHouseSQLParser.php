@@ -4,64 +4,108 @@ namespace ClickHouseSQLParser;
 
 class ClickHouseSQLParser
 {
-    const T_WHITESPACE = 1000;
+    const T_BLANK = 1000;
     const T_COMMENT = 1010;
     const T_COMMENT_SINGLE_LINE = 1011;
     const T_COMMENT_MULTI_LINE = 1012;
+    const T_WHITESPACE = 1100;
     const T_CONSTANT = 2100;
     const T_CONSTANT_NULL = 2110;
     const T_CONSTANT_NUMBER = 2120;
     const T_CONSTANT_LNUMBER = 2121;
     const T_CONSTANT_DNUMBER = 2122;
     const T_CONSTANT_STRING  = 2131;
-    //const T_STRING = 3000;
     const T_IDENTIFIER = 3100;
     const T_IDENTIFIER_ASTERISK = 3150;
     const T_IDENTIFIER_TABLE = 3140;
     const T_IDENTIFIER_COLREF = 3130;
     const T_IDENTIFIER_NOQUOTE = 3110;
+    const T_IDENTIFIER_QUOTE = 3120;
     const T_IDENTIFIER_BACKQUOTE = 3121;
-    const T_IDENTIFIER_DOUBLE_QUOTE = 3122;
-    const T_EXP_ANY = 5000;      //任意表达式
+    const T_IDENTIFIER_DOUBLEQUOTE = 3122;
+    const T_EXP_ANY = 5000;
     const T_FUNCTION = 6000;
     const T_SUBQUERY = 7000;
-    const T_SQL_SELECT    = 10001;
-    const T_SQL_UNION_ALL = 10002;
-    const T_SQL_ANY       = 19999;
+    const T_SQL = 9000;
+    const T_SQL_SELECT    = 9001;
+    const T_SQL_UNION_ALL = 9002;
+    const T_SQL_ANY       = 9999;
 
-    public static function token_name($code)
+    protected static $type_child_map = array(
+        self::T_BLANK => array(
+            self::T_COMMENT => 1,
+            self::T_COMMENT_SINGLE_LINE => 1,
+            self::T_COMMENT_MULTI_LINE => 1,
+            self::T_WHITESPACE => 1,
+        ),
+        self::T_COMMENT => array(
+            self::T_COMMENT_SINGLE_LINE => 1,
+            self::T_COMMENT_MULTI_LINE => 1,
+        ),
+        self::T_CONSTANT => array(
+            self::T_CONSTANT_NULL => 1,
+            self::T_CONSTANT_NUMBER => 1,
+            self::T_CONSTANT_LNUMBER => 1,
+            self::T_CONSTANT_DNUMBER => 1,
+            self::T_CONSTANT_STRING => 1,
+        ),
+        self::T_IDENTIFIER => array(
+            self::T_IDENTIFIER_ASTERISK => 1,
+            self::T_IDENTIFIER_TABLE => 1,
+            self::T_IDENTIFIER_COLREF => 1,
+            self::T_IDENTIFIER_NOQUOTE => 1,
+            self::T_IDENTIFIER_QUOTE => 1,
+            self::T_IDENTIFIER_BACKQUOTE => 1,
+            self::T_IDENTIFIER_DOUBLEQUOTE => 1,
+        ),
+        self::T_IDENTIFIER_QUOTE => array(
+            self::T_IDENTIFIER_BACKQUOTE => 1,
+            self::T_IDENTIFIER_DOUBLEQUOTE => 1,
+        ),
+        self::T_SQL => array(
+            self::T_SQL_SELECT => 1,
+            self::T_SQL_UNION_ALL => 1,
+            self::T_SQL_ANY => 1,
+        ),
+    );
+
+    protected static $type_name_map = array(
+        self::T_BLANK => "T_BLANK",
+        self::T_COMMENT => "T_COMMENT",
+        self::T_COMMENT_SINGLE_LINE => "T_COMMENT_SINGLE_LINE",
+        self::T_COMMENT_MULTI_LINE => "T_COMMENT_MULTI_LINE",
+        self::T_WHITESPACE => "T_WHITESPACE",
+        self::T_CONSTANT => "T_CONSTANT",
+        self::T_CONSTANT_NULL => "T_CONSTANT_NULL",
+        self::T_CONSTANT_NUMBER => "T_CONSTANT_NUMBER",
+        self::T_CONSTANT_LNUMBER => "T_CONSTANT_LNUMBER",
+        self::T_CONSTANT_DNUMBER => "T_CONSTANT_DNUMBER",
+        self::T_CONSTANT_STRING => "T_CONSTANT_STRING",
+        self::T_IDENTIFIER => "T_IDENTIFIER",
+        self::T_IDENTIFIER_TABLE => "T_IDENTIFIER_TABLE",
+        self::T_IDENTIFIER_ASTERISK => "T_IDENTIFIER_ASTERISK",
+        self::T_IDENTIFIER_COLREF => "T_IDENTIFIER_COLREF",
+        self::T_IDENTIFIER_NOQUOTE => "T_IDENTIFIER_NOQUOTE",
+        self::T_IDENTIFIER_QUOTE => "T_IDENTIFIER_QUOTE",
+        self::T_IDENTIFIER_BACKQUOTE => "T_IDENTIFIER_BACKQUOTE",
+        self::T_IDENTIFIER_DOUBLEQUOTE => "T_IDENTIFIER_DOUBLEQUOTE",
+        self::T_EXP_ANY => "T_EXP_ANY",
+        self::T_FUNCTION => "T_FUNCTION",
+        self::T_SUBQUERY => "T_SUBQUERY",
+        self::T_SQL => "T_SQL",
+        self::T_SQL_SELECT => "T_SQL_SELECT",
+        self::T_SQL_UNION_ALL => "T_SQL_UNION_ALL",
+        self::T_SQL_ANY => "T_SQL_ANY",
+    );
+
+    public static function type_name($code)
     {
-        $map = array(
-            self::T_WHITESPACE => "T_WHITESPACE",
-            self::T_COMMENT => "T_COMMENT",
-            self::T_COMMENT_SINGLE_LINE => "T_COMMENT_SINGLE_LINE",
-            self::T_COMMENT_MULTI_LINE => "T_COMMENT_MULTI_LINE",
-            self::T_CONSTANT => "T_CONSTANT",
-            self::T_CONSTANT_NULL => "T_CONSTANT_NULL",
-            self::T_CONSTANT_NUMBER => "T_CONSTANT_NUMBER",
-            self::T_CONSTANT_LNUMBER => "T_CONSTANT_LNUMBER",
-            self::T_CONSTANT_DNUMBER => "T_CONSTANT_DNUMBER",
-            self::T_CONSTANT_STRING => "T_CONSTANT_STRING",
-            self::T_IDENTIFIER => "T_IDENTIFIER",
-            self::T_IDENTIFIER_TABLE => "T_IDENTIFIER_TABLE",
-            self::T_IDENTIFIER_ASTERISK => "T_IDENTIFIER_ASTERISK",
-            self::T_IDENTIFIER_COLREF => "T_IDENTIFIER_COLREF",
-            self::T_IDENTIFIER_NOQUOTE => "T_IDENTIFIER_NOQUOTE",
-            self::T_IDENTIFIER_DOUBLE_QUOTE => "T_IDENTIFIER_DOUBLE_QUOTE",
-            self::T_IDENTIFIER_BACKQUOTE => "T_IDENTIFIER_BACKQUOTE",
-            self::T_EXP_ANY => "T_EXP_ANY",
-            self::T_FUNCTION => "T_FUNCTION",
-            self::T_SUBQUERY => "T_SUBQUERY",
-            self::T_SQL_SELECT => "T_SQL_SELECT",
-            self::T_SQL_UNION_ALL => "T_SQL_UNION_ALL",
-            self::T_SQL_ANY => "T_SQL_ANY",
-        );
-        return $map[$code];
+        return self::$type_name_map[$code];
     }
 
     public static function is_type_of($sub_type, $type)
     {
-        return $type % 1000 == 0 ? $sub_type - $sub_type % 1000 == $type : ($type % 100 == 0 ? $sub_type - $sub_type % 100 == $type : ($type % 10 == 0 ? $sub_type - $sub_type % 10 == $type : $sub_type == $type));
+        return $sub_type === $type || isset(self::$type_child_map[$type][$sub_type]);
     }
 
     public static function is_token_of($token, $type)
@@ -69,8 +113,8 @@ class ClickHouseSQLParser
         if ($token === NULL) {
             return false;
         }
-        if (!\is_int($type)) { //各种符号 或者 字符串
-            if (is_array($token)) {
+        if (!\is_int($type)) { //operator keywords
+            if (\is_array($token)) {
                 return \strcasecmp($token[1], $type) === 0;
             } else {
                 return \strcasecmp($token, $type) === 0;
@@ -78,8 +122,7 @@ class ClickHouseSQLParser
         }
         if (\is_array($token)) {
             $token = $token[0];
-        }
-        if (!is_numeric($token)) {
+        } else {
             return false;
         }
         return self::is_type_of($token, $type);
@@ -87,10 +130,128 @@ class ClickHouseSQLParser
 
     public static function is_expr_of($expr, $type)
     {
-        if (!\is_int($type)) { //各种符号 或者 字符串
-            return \strcasecmp($expr["expr"], $type) === 0;
-        }
         return self::is_type_of($expr["type"], $type);
+    }
+
+    public static $EXP_CONSTANT_NULL = array(
+        "type" => self::T_CONSTANT_NULL
+    );
+
+    public static function EXP_CONSTANT_LNUMBER($num)
+    {
+        return array(
+            "type" => self::T_CONSTANT_LNUMBER,
+            "expr" => \strval($num),
+        );
+    }
+
+    public static function EXP_CONSTANT_DNUMBER($num)
+    {
+        return array(
+            "type" => self::T_CONSTANT_DNUMBER,
+            "expr" => \strval($num),
+        );
+    }
+
+    public static function EXP_CONSTANT_STRING($str)
+    {
+        return array(
+            "type" => self::T_CONSTANT_STRING,
+            "expr" => \strval($str),
+        );
+    }
+
+    public static $EXP_CONSTANT_0 = array(
+        "type" => self::T_CONSTANT_LNUMBER,
+        "expr" => "0",
+    );
+
+
+    public static $EXP_CONSTANT_1 = array(
+        "type" => self::T_CONSTANT_LNUMBER,
+        "expr" => "1",
+    );
+
+    public static $EXP_CONSTANT_EMPTY_STRING = array(
+        "type" => self::T_CONSTANT_STRING,
+        "expr" => "",
+    );
+
+    public static $EXP_IDENTIFIER_ASTERISK = array(
+        "type" => self::T_IDENTIFIER_ASTERISK
+    );
+
+    public static function EXP_IDENTIFIER_COLREF($parts)
+    {
+        if (!is_array($parts)) {
+            $parts = self::parse_colref($parts);
+        }
+        if (\count($parts) === 0) {
+            throw new \ErrorException("colref cannot be empty");
+        }
+        return array(
+            "type" => self::T_IDENTIFIER_COLREF,
+            "expr" => "",
+            "parts" => $parts,
+        );
+    }
+
+    public static function EXP_IDENTIFIER_TABLE($parts)
+    {
+        if (!is_array($parts)) {
+            $parts = self::parse_colref($parts);
+        }
+        if (\count($parts) === 0) {
+            throw new \ErrorException("table cannot be empty");
+        }
+        return array(
+            "type" => self::T_IDENTIFIER_TABLE,
+            "expr" => "",
+            "parts" => $parts,
+        );
+    }
+
+    public static function EXP_FUNCTION($name, $sub_tree)
+    {
+        return array(
+            "type" => self::T_FUNCTION,
+            "expr" => $name,
+            "sub_tree" => $sub_tree,
+        );
+    }
+
+    public static function EXP_ANY($str)
+    {
+        return array(
+            "type" => self::T_EXP_ANY,
+            "expr" => $str,
+        );
+    }
+
+    public static function EXP_SUBQUERY($expr)
+    {
+        return array(
+            "type" => self::T_SUBQUERY,
+            "expr" => "",
+            "sub_tree" => $expr,
+        );
+    }
+
+    public static function SQL_ANY($str)
+    {
+        return array(
+            "type" => self::T_SQL_ANY,
+            "expr" => $str,
+        );
+    }
+
+    public static function SQL_UNION_ALL($sub_tree)
+    {
+        return array(
+            "type" => self::T_SQL_UNION_ALL,
+            "expr" => "",
+            "sub_tree" => $sub_tree,
+        );
     }
 
     public static function join_tokens($tokens)
@@ -107,7 +268,7 @@ class ClickHouseSQLParser
     {
         switch ($token[0]) {
             case self::T_CONSTANT_NULL:
-                return self::EXP_CONSTANT_NULL();
+                return self::$EXP_CONSTANT_NULL;
             case self::T_CONSTANT_LNUMBER:
                 return  self::EXP_CONSTANT_LNUMBER($token[1]);
             case self::T_CONSTANT_DNUMBER:
@@ -130,16 +291,62 @@ class ClickHouseSQLParser
         return $replace_expr;
     }
 
-    protected static function internal_compact_expr(&$expr)
+    public static function compact_expr($expr, $compact_and = 1, $compact_or = 1, $compact_concat = 1)
+    {
+        self::internal_compact_expr($expr, $compact_and, $compact_or, $compact_concat);
+        return $expr;
+    }
+
+    public static function compact_tokens($tokens, $check_error = 1, $remove_blank = 1)
+    {
+        if ($check_error) {
+            $tokens = self::post_process_check_error($tokens);
+        }
+        if ($remove_blank) {
+            $tokens = self::post_process_remove_blank($tokens);
+        }
+        return $tokens;
+    }
+
+    public static function dump_expr($expr, $return = false)
+    {
+        self::convert_expr_name($expr);
+        $s = json_encode($expr, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        if (!$return) {
+            echo $s;
+        }
+        return $s;
+    }
+
+    public static function dump_tokens($tokens, $return = false)
+    {
+        $s = "";
+        foreach ($tokens as $k => &$token) {
+            if (\is_array($token)) {
+                $s .= "$k: (" . self::type_name($token[0]) . ") " . \var_export($token[1], true) . "\n";
+            } else {
+                $s .= "$k: " . \var_export($token, true) . "\n";
+            }
+        }
+        if (!$return) {
+            echo $s;
+        }
+        return $s;
+    }
+
+    protected static function internal_compact_expr(&$expr, $and, $or, $concat)
     {
         switch ($expr["type"]) {
             case self::T_FUNCTION:
                 foreach ($expr["sub_tree"] as &$sub_expr) {
-                    self::internal_compact_expr($sub_expr);
+                    self::internal_compact_expr($sub_expr, $and, $or, $concat);
                 }
                 unset($sub_expr);
                 switch ($expr["expr"]) {
                     case "and":
+                        if (!$and) {
+                            break;
+                        }
                         $sub_tree = array();
                         foreach ($expr["sub_tree"] as $sub_expr) {
                             if (self::is_expr_of($sub_expr, self::T_FUNCTION) && $sub_expr["expr"] === "and") {
@@ -157,7 +364,7 @@ class ClickHouseSQLParser
                             }
                         }
                         if (\count($sub_tree2) == 0) {
-                            $expr = self::replace_expr($expr, self::EXP_CONSTANT_1());
+                            $expr = self::replace_expr($expr, self::$EXP_CONSTANT_1);
                         } elseif (\count($sub_tree2) == 1) {
                             $expr = self::replace_expr($expr, $sub_tree2[0]);
                         } else {
@@ -165,6 +372,9 @@ class ClickHouseSQLParser
                         }
                         break;
                     case "or":
+                        if (!$or) {
+                            break;
+                        }
                         $sub_tree = array();
                         foreach ($expr["sub_tree"] as $sub_expr) {
                             if (self::is_expr_of($sub_expr, self::T_FUNCTION) && $sub_expr["expr"] === "or") {
@@ -182,7 +392,7 @@ class ClickHouseSQLParser
                             }
                         }
                         if (\count($sub_tree2) == 0) {
-                            $expr = self::replace_expr($expr, self::EXP_CONSTANT_0());
+                            $expr = self::replace_expr($expr, self::$EXP_CONSTANT_0);
                         } elseif (\count($sub_tree2) == 1) {
                             $expr = self::replace_expr($expr, $sub_tree2[0]);
                         } else {
@@ -190,6 +400,9 @@ class ClickHouseSQLParser
                         }
                         break;
                     case "concat":
+                        if (!$concat) {
+                            break;
+                        }
                         $sub_tree = array();
                         foreach ($expr["sub_tree"] as $sub_expr) {
                             if (self::is_expr_of($sub_expr, self::T_FUNCTION) && $sub_expr["expr"] === "concat") {
@@ -207,7 +420,7 @@ class ClickHouseSQLParser
                             }
                         }
                         if (\count($sub_tree2) == 0) {
-                            $expr = self::replace_expr($expr, self::EXP_CONSTANT_EMPTY_STRING());
+                            $expr = self::replace_expr($expr, self::$EXP_CONSTANT_EMPTY_STRING);
                         } elseif (\count($sub_tree2) == 1) {
                             $expr = self::replace_expr($expr, $sub_tree2[0]);
                         } else {
@@ -218,23 +431,23 @@ class ClickHouseSQLParser
                 break;
             case self::T_SQL_UNION_ALL:
                 foreach ($expr["sub_tree"] as &$sub_expr) {
-                    self::internal_compact_expr($sub_expr);
+                    self::internal_compact_expr($sub_expr, $and, $or, $concat);
                 }
                 break;
             case self::T_SUBQUERY:
-                self::internal_compact_expr($expr["sub_tree"]);
+                self::internal_compact_expr($expr["sub_tree"], $and, $or, $concat);
                 break;
             case self::T_SQL_SELECT:
                 foreach (["WITH", "SELECT", "FROM", "ARRAYJOIN", "GROUPBY", "ORDERBY"] as $key) {
                     if (isset($expr[$key])) {
                         foreach ($expr[$key] as &$sub_expr) {
-                            self::internal_compact_expr($sub_expr);
+                            self::internal_compact_expr($sub_expr, $and, $or, $concat);
                         }
                     }
                 }
                 foreach (["PREWHERE", "WHERE", "HAVING"] as $key) {
                     if (isset($expr[$key])) {
-                        self::internal_compact_expr($expr[$key]);
+                        self::internal_compact_expr($expr[$key], $and, $or, $concat);
                     }
                 }
                 break;
@@ -242,13 +455,13 @@ class ClickHouseSQLParser
         foreach (["using"] as $key) {
             if (isset($expr[$key])) {
                 foreach ($expr[$key] as &$sub_expr) {
-                    self::internal_compact_expr($sub_expr);
+                    self::internal_compact_expr($sub_expr, $and, $or, $concat);
                 }
             }
         }
         foreach (["on"] as $key) {
             if (isset($expr[$key])) {
-                self::internal_compact_expr($expr[$key]);
+                self::internal_compact_expr($expr[$key], $and, $or, $concat);
             }
         }
     }
@@ -292,33 +505,7 @@ class ClickHouseSQLParser
                 self::convert_expr_name($expr[$key]);
             }
         }
-        $expr["type"] = self::token_name($expr["type"]);
-    }
-
-    public static function dump_expr($expr, $return = false)
-    {
-        self::convert_expr_name($expr);
-        $s = json_encode($expr, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-        if (!$return) {
-            echo $s;
-        }
-        return $s;
-    }
-
-    public static function dump_tokens($tokens, $return = false)
-    {
-        $s = "";
-        foreach ($tokens as $k => &$token) {
-            if (\is_array($token)) {
-                $s .= "$k: (" . self::token_name($token[0]) . ") " . \var_export($token[1], true) . "\n";
-            } else {
-                $s .= "$k: " . \var_export($token, true) . "\n";
-            }
-        }
-        if (!$return) {
-            echo $s;
-        }
-        return $s;
+        $expr["type"] = self::type_name($expr["type"]);
     }
 
     public static function parse_colref($str)
@@ -479,21 +666,6 @@ class ClickHouseSQLParser
         return false;
     }
 
-    protected static function is_token_blank($token)
-    {
-        static $map = array(" " => 1, "\r" => 1, "\n" => 1, "\t" => 1, "\r\n" => 1);
-        if (\is_array($token)) {
-            return self::is_token_of($token, self::T_COMMENT) || self::is_token_of($token, self::T_WHITESPACE);
-        } else {
-            for ($i = \strlen($token); $i-- > 0;) {
-                if (!isset($map[$token[$i]])) {
-                    return false;
-                }
-            }
-            return true;
-        }
-    }
-
     //start with [\\a-zA-Z_\x7f-\xff][
     protected static function get_next_string($str, $index)
     {
@@ -530,7 +702,7 @@ class ClickHouseSQLParser
             } elseif ($c === $quote) {
                 $s .= $c;
                 $map = array(
-                    "\"" => self::T_IDENTIFIER_DOUBLE_QUOTE,
+                    "\"" => self::T_IDENTIFIER_DOUBLEQUOTE,
                     "'" => self::T_CONSTANT_STRING,
                     "`" => self::T_IDENTIFIER_BACKQUOTE,
                 );
@@ -608,18 +780,8 @@ class ClickHouseSQLParser
             "" => 6,
         );
         $c = @$str[$index];
-        if (!isset($map[$c])) {
-            DEF: if (self::is_valid_name_start_char($c)) {
-                return self::get_next_string($str, $index);
-            } else {
-                if (($r = self::get_next_splitter("", $str, $index, self::get_splitters_map()))) {
-                    return $r;
-                } else {
-                    throw new \ErrorException("unkown char $c (" . ord($c) . ")");
-                }
-            }
-        }
-        switch ($map[$c]) {
+        $code = isset($map[$c]) ? $map[$c] : -1;
+        switch ($code) {
             case 1:
                 list($token, $index) = self::get_next_quote($str, $index);
                 break;
@@ -634,11 +796,21 @@ class ClickHouseSQLParser
                 break;
             case 6:
                 return array(false, $index); //END
+            case -1:
+                break;
             default:
                 throw new \ErrorException("BUG");
         }
-        if ($token === false) {
-            goto DEF;
+        if ($code === -1 || $token === false) {
+            if (self::is_valid_name_start_char($c)) {
+                return self::get_next_string($str, $index);
+            } else {
+                if (($r = self::get_next_splitter("", $str, $index, self::get_splitters_map()))) {
+                    return $r;
+                } else {
+                    throw new \ErrorException("unkown char $c (" . ord($c) . ")");
+                }
+            }
         }
         return array($token, $index);
     }
@@ -835,7 +1007,7 @@ class ClickHouseSQLParser
         return array(array($is_float ? self::T_CONSTANT_DNUMBER : self::T_CONSTANT_LNUMBER, $s), $index);
     }
 
-    protected static function post_process_check_tokens($tokens)
+    protected static function post_process_check_error($tokens)
     {
         $last_token = NULL;
         foreach ($tokens as $token) {
@@ -852,11 +1024,11 @@ class ClickHouseSQLParser
         return $tokens;
     }
 
-    protected static function post_process_remove_whitespace($tokens)
+    protected static function post_process_remove_blank($tokens)
     {
         $new_tokens = array();
         foreach ($tokens as $token) {
-            if (!self::is_token_blank($token)) {
+            if (!self::is_token_of($token, self::T_BLANK)) {
                 $new_tokens[] = $token;
             }
         }
@@ -881,18 +1053,14 @@ class ClickHouseSQLParser
         return $tokens;
     }
 
-    public static function compact_expr($expr)
-    {
-        self::internal_compact_expr($expr);
-        return $expr;
-    }
+
 
     public static function parse($sql)
     {
         if (preg_match("{^[\s(]*(?:WITH|SELECT)\s}si", $sql)) {
             $tokens = self::token_get_all($sql);
-            $tokens = self::post_process_check_tokens($tokens);
-            $tokens = self::post_process_remove_whitespace($tokens);
+            $tokens = self::post_process_check_error($tokens);
+            $tokens = self::post_process_remove_blank($tokens);
             list($subquery, $index) = self::get_next_expr($tokens, 0, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
@@ -902,15 +1070,15 @@ class ClickHouseSQLParser
             }
             return $subquery["sub_tree"];
         } else {
-            return array("type" => self::T_SQL_ANY, "expr" => $sql);
+            return self::SQL_ANY($sql);
         }
     }
 
     public static function parse_expr($str)
     {
         $tokens = self::token_get_all($str);
-        $tokens = self::post_process_check_tokens($tokens);
-        $tokens = self::post_process_remove_whitespace($tokens);
+        $tokens = self::post_process_check_error($tokens);
+        $tokens = self::post_process_remove_blank($tokens);
         list($expr, $index) = self::get_next_expr($tokens, 0, 0);
         if ($index != \count($tokens)) {
             throw new \ErrorException("cannot parse as expr, some token left");
@@ -975,7 +1143,7 @@ class ClickHouseSQLParser
         }
     }
 
-    protected static function backquote($str)
+    public static function backquote($str)
     {
         return "`" . \strtr($str, array("\000" => "\\0", "\n" => "\\n", "\r" => "\\r", "\\" => "\\\\", "'" => "\\'", "\"" => "\\\"", "`" => "\`")) . "`";
     }
@@ -1013,14 +1181,13 @@ class ClickHouseSQLParser
         return self::is_expr_of($p, self::T_CONSTANT_STRING) && $p["expr"] === "";
     }
 
-    private static function create2($p)
+    private static function create2($p, $use_function_instead_operator)
     {
         switch ($p["type"]) {
             case self::T_CONSTANT_NULL:
                 return array("NULL" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_IDENTIFIER_ASTERISK:
                 return array("*" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
-            case self::T_CONSTANT:
             case self::T_CONSTANT_LNUMBER:
             case self::T_CONSTANT_DNUMBER:
                 return array($p["expr"] . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
@@ -1030,20 +1197,20 @@ class ClickHouseSQLParser
                 return array(self::mysql_encode_str($p["expr"]) . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_IDENTIFIER_COLREF:
             case self::T_IDENTIFIER_TABLE:
-                $ss = [];
+                $ss = array();
                 foreach ($p["parts"] as $part) {
                     $ss[] = self::backquote($part, 0, 1);
                 }
                 return array(self::joinStr($p) . \implode(".", $ss) . self::aliasStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_FUNCTION:
                 $func = $p["expr"];
-                if (!isset(self::$precedence_map_replace[$func])) {
+                if ($use_function_instead_operator || !isset(self::$precedence_map_replace[$func])) {
                     $s = "";
-                    foreach (@$p["sub_tree"] ? $p["sub_tree"] : [] as $k => $sub) {
+                    foreach (@$p["sub_tree"] ? $p["sub_tree"] : array() as $k => $sub) {
                         if ($k !== 0) {
                             $s .= ",";
                         }
-                        list($str) = self::create2($sub);
+                        list($str) = self::create2($sub, $use_function_instead_operator);
                         $s .= $str;
                     }
                     return array($p["expr"] . "($s)" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
@@ -1064,14 +1231,14 @@ class ClickHouseSQLParser
                     case "multiply":
                     case "divide":
                     case "modulo":
-                        list($str, $sub_precedence) = self::create2($p["sub_tree"][0]);
+                        list($str, $sub_precedence) = self::create2($p["sub_tree"][0], $use_function_instead_operator);
                         if ($sub_precedence < $precedence) {
                             $s .= "($str)";
                         } else {
                             $s .= "$str";
                         }
                         $s .= self::$map1[$func];
-                        list($str, $sub_precedence) = self::create2($p["sub_tree"][1]);
+                        list($str, $sub_precedence) = self::create2($p["sub_tree"][1], $use_function_instead_operator);
                         if ($sub_precedence <= $precedence) {
                             $s .= "($str)";
                         } else {
@@ -1084,7 +1251,7 @@ class ClickHouseSQLParser
                         if (self::is_expr_of($val, self::T_FUNCTION) && $val["expr"] === "tuple") {
                             $val["expr"] = "";
                         }
-                        list($str, $sub_precedence) = self::create2($val);
+                        list($str, $sub_precedence) = self::create2($val, $use_function_instead_operator);
                         if ($sub_precedence < $precedence) {
                             $s .= "($str)";
                         } else {
@@ -1103,10 +1270,39 @@ class ClickHouseSQLParser
                             if (self::is_expr_of($sub, self::T_FUNCTION) && $sub["expr"] === "tuple") {
                                 $sub["expr"] = "";
                             }
-                            list($str) = self::create2($sub);
+                            list($str) = self::create2($sub, $use_function_instead_operator);
                             $s .= $str;
                         }
                         $s .= ")";
+                        break;
+                    case "lambda":
+                            $val = $p["sub_tree"][0];
+                            if (self::is_expr_of($val, self::T_FUNCTION) && $val["expr"] === "tuple") {
+                                $val["expr"] = "";
+                            }
+                            list($str, $sub_precedence) = self::create2($val, $use_function_instead_operator);
+                            if ($sub_precedence < $precedence) {
+                                $s .= "($str)";
+                            } else {
+                                $s .= "$str";
+                            }
+                            $s .= self::$map1[$func];
+                            $val = $p["sub_tree"][1];
+                            if (!(self::is_expr_of($val, self::T_FUNCTION) && $val["expr"] === "tuple")) {
+                                throw new \ErrorException("BUG");
+                            }
+                            $s .= "(";
+                            foreach ($val["sub_tree"] as $k => $sub) {
+                                if ($k !== 0) {
+                                    $s .= ",";
+                                }
+                                if (self::is_expr_of($sub, self::T_FUNCTION) && $sub["expr"] === "tuple") {
+                                    $sub["expr"] = "";
+                                }
+                                list($str) = self::create2($sub, $use_function_instead_operator);
+                                $s .= $str;
+                            }
+                            $s .= ")";
                         break;
                     case "or":
                     case "and":
@@ -1115,7 +1311,7 @@ class ClickHouseSQLParser
                             if ($k !== 0) {
                                 $s .= self::$map1[$func];
                             }
-                            list($str, $sub_precedence) = self::create2($sub);
+                            list($str, $sub_precedence) = self::create2($sub, $use_function_instead_operator);
                             if ($sub_precedence < $precedence) {
                                 $s .= "($str)";
                             } else {
@@ -1124,7 +1320,7 @@ class ClickHouseSQLParser
                         }
                         break;
                     case "negate":
-                        list($str, $sub_precedence) = self::create2($p["sub_tree"][0]);
+                        list($str, $sub_precedence) = self::create2($p["sub_tree"][0], $use_function_instead_operator);
                         if ($sub_precedence <= $precedence) {
                             $s .= "(-($str))";
                         } else {
@@ -1138,7 +1334,7 @@ class ClickHouseSQLParser
                 }
                 return array($s . self::aliasStr($p) . self::orderStr($p), $precedence);
             case self::T_SUBQUERY:
-                return array(self::joinStr($p) . "(" . self::create2($p["sub_tree"])[0] . ")" . self::aliasStr($p) . self::orderStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::joinStr($p) . "(" . self::create2($p["sub_tree"], $use_function_instead_operator)[0] . ")" . self::aliasStr($p) . self::orderStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_SQL_ANY:
                 return array($p["expr"], 0);
             case self::T_SQL_UNION_ALL:
@@ -1147,7 +1343,7 @@ class ClickHouseSQLParser
                     if ($k != 0) {
                         $s .= " UNION ALL ";
                     }
-                    $s .= "(" . self::create2($query)[0] . ")";
+                    $s .= "(" . self::create2($query, $use_function_instead_operator)[0] . ")";
                 }
                 return array($s, 100);
             case self::T_SQL_SELECT:
@@ -1158,7 +1354,7 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create2($expr)[0];
+                        $s .= self::create2($expr, $use_function_instead_operator)[0];
                     }
                     $s .= " ";
                 }
@@ -1173,29 +1369,29 @@ class ClickHouseSQLParser
                     if ($k != 0) {
                         $s .= ",";
                     }
-                    $s .= self::create2($expr)[0];
+                    $s .= self::create2($expr, $use_function_instead_operator)[0];
                 }
                 if (@$p["FROM"]) {
                     $s .= " FROM ";
                     foreach ($p["FROM"] as $k => $expr) {
-                        $s .= self::create2($expr)[0];
+                        $s .= self::create2($expr, $use_function_instead_operator)[0];
                         if ($k == 0 && @$p["ARRAYJOIN"]) {
                             $s .= " ARRAY JOIN ";
                             foreach ($p["ARRAYJOIN"] as $k => $expr2) {
                                 if ($k != 0) {
                                     $s .= ",";
                                 }
-                                $s .= self::create2($expr2)[0];
+                                $s .= self::create2($expr2, $use_function_instead_operator)[0];
                             }
                             $s .= " ";
                         }
                     }
                 }
                 if (@$p["PREWHERE"]) {
-                    $s .= " PREWHERE " . self::create2($p["PREWHERE"])[0];
+                    $s .= " PREWHERE " . self::create2($p["PREWHERE"], $use_function_instead_operator)[0];
                 }
                 if (@$p["WHERE"]) {
-                    $s .= " WHERE " . self::create2($p["WHERE"])[0];
+                    $s .= " WHERE " . self::create2($p["WHERE"], $use_function_instead_operator)[0];
                 }
                 if (@$p["GROUPBY"]) {
                     $s .= " GROUP BY ";
@@ -1203,11 +1399,11 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create2($expr)[0];
+                        $s .= self::create2($expr, $use_function_instead_operator)[0];
                     }
                 }
                 if (@$p["HAVING"]) {
-                    $s .= " HAVING " . self::create2($p["HAVING"])[0];
+                    $s .= " HAVING " . self::create2($p["HAVING"], $use_function_instead_operator)[0];
                 }
                 if (@$p["ORDERBY"]) {
                     $s .= " ORDER BY ";
@@ -1215,7 +1411,7 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create2($expr)[0];
+                        $s .= self::create2($expr, $use_function_instead_operator)[0];
                     }
                 }
                 if (@$p["LIMITBY"]) {
@@ -1228,7 +1424,7 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create2($expr)[0];
+                        $s .= self::create2($expr, $use_function_instead_operator)[0];
                     }
                 }
                 if (@$p["LIMIT"]) {
@@ -1246,7 +1442,7 @@ class ClickHouseSQLParser
                         if ($k++ != 0) {
                             $s .= ",";
                         }
-                        $s .= "$key=" . self::create2($expr)[0];
+                        $s .= "$key=" . self::create2($expr, $use_function_instead_operator)[0];
                     }
                 }
 
@@ -1256,98 +1452,9 @@ class ClickHouseSQLParser
         }
     }
 
-    public static function create($p)
+    public static function create($p, $use_function_instead_operator = false)
     {
-        return self::create2($p)[0];
-    }
-
-
-    public static function EXP_ANY($str)
-    {
-        return array(
-            "type" => self::T_EXP_ANY,
-            "expr" => $str,
-        );
-    }
-
-    public static function EXP_FUNCTION($name, $sub_tree = [])
-    {
-        return array(
-            "type" => self::T_FUNCTION,
-            "expr" => $name,
-            "sub_tree" => $sub_tree,
-        );
-    }
-
-    public static function EXP_CONSTANT_NULL()
-    {
-        return array("type" => self::T_CONSTANT_NULL);
-    }
-
-    public static function EXP_CONSTANT_1()
-    {
-        return array(
-            "type" => self::T_CONSTANT_LNUMBER,
-            "expr" => "1",
-        );
-    }
-
-    public static function EXP_CONSTANT_0()
-    {
-        return array(
-            "type" => self::T_CONSTANT_LNUMBER,
-            "expr" => "0",
-        );
-    }
-
-    public static function EXP_CONSTANT_EMPTY_STRING()
-    {
-        return array(
-            "type" => self::T_CONSTANT_STRING,
-            "expr" => "",
-        );
-    }
-
-    public static function EXP_CONSTANT_LNUMBER($num)
-    {
-        return array(
-            "type" => self::T_CONSTANT_LNUMBER,
-            "expr" => \strval($num),
-        );
-    }
-
-    public static function EXP_CONSTANT_DNUMBER($num)
-    {
-        return array(
-            "type" => self::T_CONSTANT_DNUMBER,
-            "expr" => \strval($num),
-        );
-    }
-
-    public static function EXP_CONSTANT_STRING($str)
-    {
-        return array(
-            "type" => self::T_CONSTANT_STRING,
-            "expr" => \strval($str),
-        );
-    }
-
-
-
-    public static function EXP_IDENTIFIER_ASTERISK()
-    {
-        return array(
-            "type" => self::T_IDENTIFIER_ASTERISK
-        );
-    }
-
-    public static function EXP_IDENTIFIER_COLREF($parts)
-    {
-        return array(
-            "type" => self::T_IDENTIFIER_COLREF,
-            "expr" => "",
-            "parts" => $parts,
-        );
+        return self::create2($p, $use_function_instead_operator)[0];
     }
 
     protected static $precedence_map = array(
@@ -1374,6 +1481,7 @@ class ClickHouseSQLParser
     );
 
     protected static $precedence_map_replace = array(
+        "lambda" => 0,
         "or" => 1,
         "and" => 2,
         "equals" => 5,
@@ -1412,6 +1520,7 @@ class ClickHouseSQLParser
         "or" => " OR ",
         "in" => " IN ",
         "notIn" => " NOT IN ",
+        "lambda" => " -> ",
     );
 
     protected static function get_next_expr($tokens, $index, $precedence)
@@ -1435,10 +1544,10 @@ class ClickHouseSQLParser
                     $val1["expr"] =   "-" . $val1["expr"];
                 }
             } else {
-                $val1 = self::EXP_FUNCTION("negate", [$val1]);
+                $val1 = self::EXP_FUNCTION("negate", array($val1));
             }
         } elseif (self::is_token_of($token, "*")) {
-            $val1 = self::EXP_IDENTIFIER_ASTERISK();
+            $val1 = self::$EXP_IDENTIFIER_ASTERISK;
             $index++;
         } elseif (self::is_token_of($token, "(")) {
             $val1 = self::EXP_IDENTIFIER_COLREF([""]); //然后会出来一个空函数
@@ -1468,20 +1577,20 @@ class ClickHouseSQLParser
             $index++;
         } elseif (self::is_token_of($token, "NOT")) {
             list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["not"]);
-            $val1 = self::EXP_FUNCTION("not", [$val1]);
+            $val1 = self::EXP_FUNCTION("not", array($val1));
         } elseif (self::is_token_of($token, "INTERVAL")) {
             list($val1, $index) = self::get_next_expr($tokens, $index + 1, 0);
             $token = @$tokens[$index];
             if (!(\is_array($token) && isset(self::$interval_map[\strtoupper($token[1])]))) {
                 throw new \ErrorException("expect SECOND MINUTE HOUR DAY WEEK MONTH QUARTER YEAR got " . self::token_to_string($token));
             }
-            $val1 = self::EXP_FUNCTION(self::$interval_map[\strtoupper($token[1])], [$val1]);
+            $val1 = self::EXP_FUNCTION(self::$interval_map[\strtoupper($token[1])], array($val1));
             $index++;
         } elseif (self::is_token_of($token, "WITH") || self::is_token_of($token, "SELECT")) {
             list($val1, $index) = self::get_next_select($tokens, $index);
-            $val1 = array("type" => self::T_SUBQUERY, "expr" => "", "sub_tree" => $val1);
+            $val1 = self::EXP_SUBQUERY($val1);
         } elseif (self::is_token_of($token, self::T_IDENTIFIER)) { //SELECT/WITH
-            $val1 = array("type" => self::T_IDENTIFIER_COLREF, "expr" => "", "parts" => array($token[1]));
+            $val1 = self::EXP_IDENTIFIER_COLREF($token[1]);
             $index++;
         } else {
             throw new \ErrorException("unexpect token " . self::token_to_string($token));
@@ -1505,7 +1614,7 @@ class ClickHouseSQLParser
                                 if (!self::is_expr_of($expr, self::T_FUNCTION)) {
                                     $sub_tree[] = $expr;
                                     $expr = self::EXP_FUNCTION('tuple', $sub_tree);
-                                    $sub_tree = [];
+                                    $sub_tree = array();
                                 }
                                 if ($expr["expr"] !== "tuple") {
                                     throw new \ErrorException("expect IDENTIFIER before -> ");
@@ -1516,7 +1625,7 @@ class ClickHouseSQLParser
                                     }
                                 }
                                 list($expr2, $index) = self::get_next_expr($tokens, $index + 1, 0);
-                                $expr = self::EXP_FUNCTION("lambda", [$expr, $expr2]);
+                                $expr = self::EXP_FUNCTION("lambda", array($expr, $expr2));
                                 $token = @$tokens[$index];
                             }
                             if ($token === ")") {
@@ -1545,7 +1654,7 @@ class ClickHouseSQLParser
                             $val1 = self::EXP_FUNCTION('tuple', $sub_tree);
                         }
                     } else {
-                        $val1 = self::EXP_FUNCTION($val1["parts"][0], $sub_tree); //出来 (1+2)
+                        $val1 = self::EXP_FUNCTION($val1["parts"][0], $sub_tree);
                     }
                     continue;
                 } elseif ($token == ".") {
@@ -1732,11 +1841,11 @@ class ClickHouseSQLParser
                 }
                 $query = $val1["sub_tree"];
                 if ($query["type"] == self::T_SQL_SELECT) {
-                    $query = array("type" => self::T_SQL_UNION_ALL, "sub_tree" => [$query]);
+                    $query = self::SQL_UNION_ALL([$query]);
                 }
                 $query2 = $val2["sub_tree"];
                 if ($query2["type"] == self::T_SQL_SELECT) {
-                    $query2 = array("type" => self::T_SQL_UNION_ALL, "sub_tree" => [$query2]);
+                    $query2 = self::SQL_UNION_ALL([$query2]);
                 }
                 foreach ($query2["sub_tree"] as $q) {
                     $query["sub_tree"][] = $q;
@@ -2109,3 +2218,7 @@ class ClickHouseSQLParser
         return array($obj, $index);
     }
 }
+
+$p=ClickHouseSQLParser::parse("select (a,b) IN (1,2) from abc");
+ClickHouseSQLParser::dump_expr($p);
+echo ClickHouseSQLParser::create($p);
