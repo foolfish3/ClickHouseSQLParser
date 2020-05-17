@@ -271,6 +271,7 @@ class ClickHouseSQLParserTypes
 
     public static function EXP_SUBQUERY($expr)
     {
+        unset($expr["FORMAT"]);
         return array(
             "type" => self::T_SUBQUERY,
             "expr" => "",
@@ -368,6 +369,13 @@ class ClickHouseSQLParserTypes
         switch ($expr["type"]) {
             case self::T_FUNCTION:
             case self::T_SQL_UNION_ALL:
+                foreach (["SETTINGS"] as $key) {
+                    if (isset($expr[$key])) {
+                        foreach ($expr[$key] as &$sub_expr) {
+                            self::convert_expr_name($sub_expr);
+                        }
+                    }
+                }
                 foreach ($expr["sub_tree"] as &$sub_expr) {
                     self::convert_expr_name($sub_expr);
                 }

@@ -82,7 +82,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         "WHERE" => 1, "PREWHERE" => 1, "ORDER" => 1, "LIMIT" => 1, "CROSS" => 1,
         "INNER" => 1, "LEFT" => 1, "RIGHT" => 1, "FULL" => 1, "JOIN" => 1,
         "ON" => 1, "USING" => 1, "ARRAY" => 1, "ALL" => 1, "ANY" => 1, "ASOF" => 1,
-        "UNION" => 1,
+        "UNION" => 1, "GLOBAL" => 1, "FORMAT" => 1,
     );
 
     protected static $interval_map = array(
@@ -127,7 +127,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
 
     public static function replace_expr($expr, $replace_expr)
     {
-        foreach (["join", "on", "using", "alias", "order"] as $key) {
+        foreach (["join", "on", "using", "alias", "order", "final"] as $key) {
             unset($replace_expr[$key]);
             if (isset($expr[$key])) {
                 $replace_expr[$key] = $expr[$key];
@@ -284,11 +284,11 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
             }
-            if (self::is_expr_of($query, self::T_SUBQUERY)) {
-                $query = $query["sub_tree"];
-            }
+            //if (self::is_expr_of($query, self::T_SUBQUERY)) {
+            //    $query = $query["sub_tree"];
+            //}
             if (!self::is_expr_of($query, self::T_SQL_ALLOW_IN_SUBQUERY)) {
-                throw new \ErrorException("cannot parse as sql, not a subquery or sql, maybe BUG");
+                throw new \ErrorException("cannot parse as sql, maybe BUG");
             }
             return $query;
         } else {
@@ -313,11 +313,14 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
 
     protected static function aliasStr($p)
     {
-        if (!self::hasAlias($p)) {
-            return "";
-        } else {
-            return " AS " . self::backquote($p["alias"]);
+        $s = "";
+        if (self::hasAlias($p)) {
+            $s .= " AS " . self::backquote($p["alias"]);
         }
+        if (@$p["final"]) {
+            $s .= " FINAL";
+        }
+        return $s;
     }
 
     protected static function orderStr($p)
@@ -334,7 +337,18 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         if (!isset($p["join"]) || $p["join"] === false) {
             return "";
         } else {
-            return " {$p["join"]} JOIN ";
+            $join = $p["join"];
+            $s = "";
+            if (@$join["global"]) {
+                $s .= " GLOBAL";
+            }
+            if (@$join["strictness"]) {
+                $s .= " " . $join["strictness"];
+            }
+            if (@$join["type"] !== "INNER") {
+                $s .= " " . $join["type"];
+            }
+            return "$s JOIN ";
         }
     }
 
@@ -582,6 +596,19 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     }
                     $s .= "(" . self::create2($query)[0] . ")";
                 }
+                if (@$p["FORMAT"]) {
+                    $s .= " FORMAT " . $p["FORMAT"];
+                }
+                if (@$p["SETTINGS"]) {
+                    $s .= " SETTINGS ";
+                    $k = 0;
+                    foreach ($p["SETTINGS"] as $key => $expr) {
+                        if ($k++ != 0) {
+                            $s .= ",";
+                        }
+                        $s .= "$key=" . self::create2($expr)[0];
+                    }
+                }
                 return array($s, 100);
             case self::T_SQL_SELECT:
                 $s = "";
@@ -596,10 +623,8 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     $s .= " ";
                 }
                 $s .= "SELECT";
-                if (@$p["SELECT_OPTIONS"]) {
-                    foreach ($p["SELECT_OPTIONS"] as $option) {
-                        $s .= " $option";
-                    }
+                if (@$p["OPTION_SELECT_DISTINCT"]) {
+                    $s .= " DISTINCT";
                 }
                 $s .= " ";
                 foreach ($p["SELECT"] as $k => $expr) {
@@ -613,6 +638,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     foreach ($p["FROM"] as $k => $expr) {
                         $s .= self::create2($expr)[0];
                         if ($k == 0 && @$p["ARRAYJOIN"]) {
+                            if (@$p["OPTION_SELECT_DISTINCT"]) {
+                                $s .= " LEFT";
+                            }
                             $s .= " ARRAY JOIN ";
                             foreach ($p["ARRAYJOIN"] as $k => $expr2) {
                                 if ($k != 0) {
@@ -671,7 +699,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     }
                     $s .= $p["LIMIT"]["row_count"];
                 }
-
+                if (@$p["FORMAT"]) {
+                    $s .= " FORMAT " . $p["FORMAT"];
+                }
                 if (@$p["SETTINGS"]) {
                     $s .= " SETTINGS ";
                     $k = 0;
@@ -793,7 +823,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 return array($val1, $index);
             }
             $operator  = \is_string($token) ? $token : \strtoupper($token[1]);
-            if ($is_sql && !isset([")" => 1, "UNION" => 1][$operator])) {
+            if ($is_sql && !isset([")" => 1, "UNION" => 1, "FORMAT" => 1, "SETTINGS" => 1][$operator])) {
                 throw new \ErrorException("unexpect token " . self::token_to_string($token));
             }
             $old_index = $index;
@@ -967,7 +997,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                             goto F3;
                         }
                     }
-                    throw new \ErrorException("expect NOT | IN  after 'GLOBAL ... ' got " . self::token_to_string($token));
+                    return array($val1, $old_index);;
                 case "NOT":
                     $token = @$tokens[++$index];
                     if (self::is_token_of($token, "IN")) {
@@ -1113,6 +1143,71 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     $val1["alias"] = self::parse_colref($token[1])[0];
                     $index++;
                     continue 2;
+                case "FORMAT":
+                    if (!$allow_sql) {
+                        return array($val1, $index);
+                    }
+                    $unionPrecedence = 1;
+                    if ($unionPrecedence <= $precedence) {
+                        return array($val1, $old_index);
+                    }
+                    $token = @$tokens[++$index];
+                    if (!self::is_token_of($token, self::T_IDENTIFIER_NOQUOTE)) {
+                        throw new \ErrorException("expect (FORMAT TYPE) got " . self::token_to_string($token));
+                    }
+                    if (self::is_expr_of($val1, self::T_SUBQUERY)) {
+                        if (self::hasAlias($val1)) {
+                            throw new \ErrorException("the (QUERY) used in FORMAT cannot has alias");
+                        }
+                        $val1 = $val1["sub_tree"];
+                    }
+                    if (isset($val1["FORMAT"])) {
+                        throw new \ErrorException("the query already has format");
+                    }
+                    if (isset($val1["SETTINGS"])) {
+                        throw new \ErrorException("the query already has settings");
+                    }
+                    $val1["FORMAT"] = $token[1];
+                    $token = @$tokens[++$index];
+                    $is_sql = true;
+                    continue 2;
+                case "SETTINGS":
+                    if (!$allow_sql) {
+                        return array($val1, $index);
+                    }
+                    $unionPrecedence = 1;
+                    if ($unionPrecedence <= $precedence) {
+                        return array($val1, $old_index);
+                    }
+                    if (isset($val1["SETTINGS"])) {
+                        throw new \ErrorException("the query already has settings");
+                    }
+                    $token = @$tokens[$index];
+                    $val1["SETTINGS"] = array();
+                    $index++;
+                    for (;;) {
+                        $token = @$tokens[$index];
+                        if (!self::is_token_of($token, self::T_IDENTIFIER_NOQUOTE)) {
+                            throw new \ErrorException("expect (IDENTIFIER) after 'SETTINGS' got " . self::token_to_string($token));
+                        }
+                        $key = $token[1];
+                        $token = @$tokens[++$index];
+                        if (!self::is_token_of($token, "=")) {
+                            throw new \ErrorException("expect '=' after 'SETTINGS' got " . self::token_to_string($token));
+                        }
+                        $token = @$tokens[++$index];
+                        if (!self::is_token_of($token, self::T_CONSTANT)) {
+                            throw new \ErrorException("expect (CONSTANT) after 'SETTINGS' got " . self::token_to_string($token));
+                        }
+                        $val1["SETTINGS"][$key] = self::token_to_constant_expr($token);
+                        $token = @$tokens[++$index];
+                        if ($token === ",") {
+                            $index++;
+                        } else {
+                            break;
+                        }
+                    }
+                    continue 2;
                 case "UNION":
                     if (!$allow_sql) {
                         return array($val1, $index);
@@ -1129,6 +1224,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         if (self::hasAlias($val1)) {
                             throw new \ErrorException("the (QUERY) used in UNION ALL cannot has alias");
                         }
+                        if (isset($val1["FORMAT"])) {
+                            throw new \ErrorException("the (QUERY) used in UNION ALL cannot has format");
+                        }
                         $val1 = $val1["sub_tree"];
                     }
                     if (self::is_expr_of($val1, self::T_SQL_SELECT)) {
@@ -1141,6 +1239,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     if (self::is_expr_of($val2, self::T_SUBQUERY)) {
                         if (self::hasAlias($val2)) {
                             throw new \ErrorException("the (QUERY) used in UNION ALL cannot has alias");
+                        }
+                        if (isset($val2["FORMAT"])) {
+                            throw new \ErrorException("the (QUERY) used in UNION ALL cannot has format");
                         }
                         $val2 = $val1["sub_tree"];
                     }
@@ -1200,8 +1301,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         }
         $token = @$tokens[++$index];
         if (self::is_token_of($token, "DISTINCT")) {
-            $obj["SELECT_OPTIONS"] = array();
-            $obj["SELECT_OPTIONS"][] = "DISTINCT";
+            $obj["OPTION_SELECT_DISTINCT"] = 1;
             $token = @$tokens[++$index];
         }
         for (;;) {
@@ -1239,8 +1339,16 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 $index++;
                 $token = @$tokens[$index];
             }
+            if (self::is_token_of($token, "FINAL")) {
+                $token = @$tokens[++$index];
+                $expr["final"] = 1;
+            }
             $obj["FROM"][] = $expr;
             $token = @$tokens[$index];
+            if (self::is_token_of($token, "LEFT") && self::is_token_of(@$tokens[$index + 1], "ARRAY")) {
+                $token = @$tokens[++$index];
+                $obj["OPTION_ARRAYJOIN_LEFT"] = 1;
+            }
             if (self::is_token_of($token, "ARRAY")) {
                 $token = @$tokens[++$index];
                 if (!self::is_token_of($token, "JOIN")) {
@@ -1260,6 +1368,33 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 }
             }
             for (;;) {
+                $join = array();
+                if (self::is_token_of($token, ",")) {
+                    $join["type"] = "CROSS";
+                    goto F5;
+                }
+                if (self::is_token_of($token, "GLOBAL")) {
+                    $token = @$tokens[++$index];
+                    $join["global"] = 1;
+                }
+                if (self::is_token_of($token, "ALL")) {
+                    $token = @$tokens[++$index];
+                    $join["strictness"] = "ALL";
+                } elseif (self::is_token_of($token, "ANY")) {
+                    $token = @$tokens[++$index];
+                    $join["strictness"] = "ANY";
+                } elseif (self::is_token_of($token, "ASOF")) {
+                    $token = @$tokens[++$index];
+                    $join["strictness"] = "ASOF";
+                } elseif (self::is_token_of($token, "CROSS")) {
+                    $join["type"] = "CROSS";
+                    $token = @$tokens[++$index];
+                    if (!self::is_token_of($token, "JOIN")) {
+                        throw new \ErrorException("expect 'JOIN' after 'CROSS' got " . self::token_to_string($token));
+                    }
+                    $token = @$tokens[++$index];
+                    goto F5;
+                }
                 if (self::is_token_of($token, "INNER")) {
                     $token = @$tokens[++$index];
                     if (!self::is_token_of($token, "JOIN")) {
@@ -1267,23 +1402,18 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     }
                 }
                 if (self::is_token_of($token, "JOIN")) {
-                    $join_type = "INNER";
-                } elseif (self::is_token_of($token, "CROSS")) {
-                    $join_type = "CROSS";
-                    $token = @$tokens[++$index];
-                    if (!self::is_token_of($token, "JOIN")) {
-                        throw new \ErrorException("expect 'JOIN' after 'CROSS' got " . self::token_to_string($token));
-                    }
-                } elseif (self::is_token_of($token, ",")) {
-                    $join_type = "CROSS";
+                    $join["type"] = "INNER";
                 } else {
                     if (self::is_token_of($token, "LEFT")) {
-                        $join_type = "LEFT";
+                        $join["type"] = "LEFT";
                     } elseif (self::is_token_of($token, "RIGHT")) {
-                        $join_type = "RIGHT";
+                        $join["type"] = "RIGHT";
                     } elseif (self::is_token_of($token, "FULL")) {
-                        $join_type = "FULL";
+                        $join["type"] = "FULL";
                     } else {
+                        if ($join) {
+                            throw new \ErrorException("expect 'INNER' 'LEFT' 'RIGHT' 'FULL' 'JOIN' got " . self::token_to_string($token));
+                        }
                         break;
                     }
                     $token = @$tokens[++$index];
@@ -1291,11 +1421,14 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         $token = @$tokens[++$index];
                     }
                     if (!self::is_token_of($token, "JOIN")) {
-                        throw new \ErrorException("expect 'JOIN' after '$join_type' got " . self::token_to_string($token));
+                        throw new \ErrorException("expect 'JOIN' after '{$join["type"]}' got " . self::token_to_string($token));
                     }
                 }
-                list($expr, $index) = self::get_next_expr($tokens, $index + 1, 0);
-                $expr["join"] = $join_type;
+                F5: list($expr, $index) = self::get_next_expr($tokens, $index + 1, 0);
+                // if(@$join["strictness"]==="ALL"){
+                //     unset($join["strictness"]);
+                // }
+                $expr["join"] = $join;
                 if (self::is_expr_of($expr, self::T_IDENTIFIER_COLREF)) {
                     $expr["type"] = self::T_IDENTIFIER_TABLE;
                 }
@@ -1311,7 +1444,11 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     $index++;
                     $token = @$tokens[$index];
                 }
-                if ($join_type === "CROSS") {
+                if (self::is_token_of($token, "FINAL")) {
+                    $token = @$tokens[++$index];
+                    $expr["final"] = 1;
+                }
+                if ($join["type"] === "CROSS") {
                     $obj["FROM"][] = $expr;
                     continue;
                 }
@@ -1332,7 +1469,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     list($expr2, $index) = self::get_next_expr($tokens, $index + 1, 0);
                     $expr["on"] = $expr2;
                 } else {
-                    throw new \ErrorException("expect 'USING' or 'ON' after '$join_type' got " . self::token_to_string($token));
+                    throw new \ErrorException("expect 'USING' or 'ON' after '{$join["type"]}' got " . self::token_to_string($token));
                 }
                 $obj["FROM"][] = $expr;
             }
@@ -1460,38 +1597,10 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 "offset" => $offset, "row_count" => $row_count
             );
         }
-
-        $token = @$tokens[$index];
-        if (self::is_token_of($token, "SETTINGS")) {
-            $obj["SETTINGS"] = array();
-            $index++;
-            for (;;) {
-                $token = @$tokens[$index];
-                if (!self::is_token_of($token, self::T_IDENTIFIER_NOQUOTE)) {
-                    throw new \ErrorException("expect (IDENTIFIER) after 'SETTINGS' got " . self::token_to_string($token));
-                }
-                $key = $token[1];
-                $token = @$tokens[++$index];
-                if (!self::is_token_of($token, "=")) {
-                    throw new \ErrorException("expect '=' after 'SETTINGS' got " . self::token_to_string($token));
-                }
-                $token = @$tokens[++$index];
-                if (!self::is_token_of($token, self::T_CONSTANT)) {
-                    throw new \ErrorException("expect (CONSTANT) after 'SETTINGS' got " . self::token_to_string($token));
-                }
-                $obj["SETTINGS"][$key] = self::token_to_constant_expr($token);
-                $token = @$tokens[++$index];
-                if ($token === ",") {
-                    $index++;
-                } else {
-                    break;
-                }
-            }
-        }
         return array($obj, $index);
     }
 }
 
-$p = ClickHouseSQLParser::parse("select (1,2) global in ((1,2),(3,4))");
-ClickHouseSQLParser::dump_expr($p);
-echo ClickHouseSQLParser::create($p);
+//$p = ClickHouseSQLParser::parse_expr("(select 1  from a b final format csv settings a='1',b=2)");
+//ClickHouseSQLParser::dump_expr($p);
+//echo ClickHouseSQLParser::create($p);
