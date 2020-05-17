@@ -30,8 +30,9 @@ class ClickHouseSQLParserTypes
     const T_SUBQUERY = 7100;
     const T_SUBEXP   = 7200;
     const T_SQL = 9000;
-    const T_SQL_SELECT    = 9001;
-    const T_SQL_UNION_ALL = 9002;
+    const T_SQL_ALLOW_IN_SUBQUERY     = 9100; //allowed in subquery
+    const T_SQL_SELECT    = 9101;
+    const T_SQL_UNION_ALL = 9102;
     const T_SQL_ANY       = 9999;
 
     protected static $type_child_map = array(
@@ -52,6 +53,10 @@ class ClickHouseSQLParserTypes
             self::T_CONSTANT_DNUMBER => 1,
             self::T_CONSTANT_STRING => 1,
         ),
+        self::T_CONSTANT_NUMBER => array(
+            self::T_CONSTANT_LNUMBER => 1,
+            self::T_CONSTANT_DNUMBER => 1,
+        ),
         self::T_IDENTIFIER => array(
             self::T_IDENTIFIER_ASTERISK => 1,
             self::T_IDENTIFIER_TABLE => 1,
@@ -66,9 +71,14 @@ class ClickHouseSQLParserTypes
             self::T_IDENTIFIER_DOUBLEQUOTE => 1,
         ),
         self::T_SQL => array(
+            self::T_SQL_ALLOW_IN_SUBQUERY => 1,
             self::T_SQL_SELECT => 1,
             self::T_SQL_UNION_ALL => 1,
             self::T_SQL_ANY => 1,
+        ),
+        self::T_SQL_ALLOW_IN_SUBQUERY => array(
+            self::T_SQL_SELECT => 1,
+            self::T_SQL_UNION_ALL => 1,
         ),
     );
 
@@ -99,6 +109,7 @@ class ClickHouseSQLParserTypes
         self::T_SUBQUERY => "T_SUBQUERY",
         self::T_SUBEXP => "T_SUBEXP",
         self::T_SQL => "T_SQL",
+        self::T_SQL_ALLOW_IN_SUBQUERY => "T_SQL_ALLOW_IN_SUBQUERY",
         self::T_SQL_SELECT => "T_SQL_SELECT",
         self::T_SQL_UNION_ALL => "T_SQL_UNION_ALL",
         self::T_SQL_ANY => "T_SQL_ANY",
@@ -141,7 +152,7 @@ class ClickHouseSQLParserTypes
 
     public static function is_expr_of_function($expr, $func)
     {
-        return self::is_type_of($expr["type"], self::T_FUNCTION) && $expr["expr"]===$func;
+        return self::is_type_of($expr["type"], self::T_FUNCTION) && $expr["expr"] === $func;
     }
 
     public static $EXP_CONSTANT_NULL = array(

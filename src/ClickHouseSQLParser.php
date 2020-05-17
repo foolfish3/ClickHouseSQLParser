@@ -32,7 +32,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         "isNotNull" => 8,
         "like" => 8,
         "notLike" => 8,
+        "globalIn" => 8,
         "in" => 8,
+        "globalNotIn" => 8,
         "notIn" => 8,
         "concat" => 9,
         "plus" => 10,
@@ -70,6 +72,8 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         "notLike" => " not like ",
         "in" => " in ",
         "notIn" => " not in ",
+        "globalIn" => " global in ",
+        "globalNotIn" => " global not in ",
         "lambda" => "->",
     );
 
@@ -78,6 +82,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         "WHERE" => 1, "PREWHERE" => 1, "ORDER" => 1, "LIMIT" => 1, "CROSS" => 1,
         "INNER" => 1, "LEFT" => 1, "RIGHT" => 1, "FULL" => 1, "JOIN" => 1,
         "ON" => 1, "USING" => 1, "ARRAY" => 1, "ALL" => 1, "ANY" => 1, "ASOF" => 1,
+        "UNION" => 1,
     );
 
     protected static $interval_map = array(
@@ -275,14 +280,17 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
     {
         if (preg_match("{^[\s(]*(?:WITH|SELECT)\s}si", $sql)) {
             $tokens = self::token_get_all($sql, true);
-            list($subquery, $index) = self::get_next_expr($tokens, 0, 0);
+            list($query, $index) = self::get_next_expr($tokens, 0, 0, true);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
             }
-            if (!self::is_expr_of($subquery, self::T_SUBQUERY)) {
-                throw new \ErrorException("cannot parse as sql, not a subquery, maybe BUG");
+            if (self::is_expr_of($query, self::T_SUBQUERY)) {
+                $query = $query["sub_tree"];
             }
-            return $subquery["sub_tree"];
+            if (!self::is_expr_of($query, self::T_SQL_ALLOW_IN_SUBQUERY)) {
+                throw new \ErrorException("cannot parse as sql, not a subquery or sql, maybe BUG");
+            }
+            return $query;
         } else {
             return self::SQL_ANY($sql);
         }
@@ -379,21 +387,24 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
             case self::T_PARAMETRIC_FUNCTION:
                 $s = $p["expr"];
                 foreach ($p["sub_tree"] as $k => $sub_tree) {
-                    $s.= self::create2(self::EXP_FUNCTION("",$sub_tree))[0];
+                    $s .= self::create2(self::EXP_FUNCTION("", $sub_tree))[0];
                 }
                 return array($s . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_FUNCTION:
+                if ($p["expr"] == "tuple") {
+                    $p["expr"] = "";
+                }
                 $func = $p["expr"];
                 $func_upper = \strtoupper($p["expr"]);
-                $sub_tree=@$p["sub_tree"] ? $p["sub_tree"] : array();
+                $sub_tree = @$p["sub_tree"] ? $p["sub_tree"] : array();
                 $s = "";
-                $map=array("COUNT"=>"count");
-                if(isset($map[$func_upper])){
-                    $func=$map[$func_upper];
+                $map = array("COUNT" => "count");
+                if (isset($map[$func_upper])) {
+                    $func = $map[$func_upper];
                 }
                 switch ($func) {
                     case "count":
-                        if(\count($sub_tree)===0){
+                        if (\count($sub_tree) === 0) {
                             $precedence = 100;
                             $s = "count(*)";
                             break;
@@ -463,16 +474,19 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         if ($sub_precedence <= $precedence) {
                             $s .= "($str)";
                         } else {
-                            $s .= "$str";
+                            if ($func === "minus" && $str[0] === "-") {
+                                $s .= "($str)"; //  -- is for comment, so add parentheses
+                            } else {
+                                $s .= "$str";
+                            }
                         }
                         break;
                     case "in":
                     case "notIn":
+                    case "globalIn":
+                    case "globalNotIn":
                         $precedence = self::$precedence_map[$func];
                         $val = $sub_tree[0];
-                        if (self::is_expr_of_function($val, "tuple")) {
-                            $val["expr"] = "";
-                        }
                         list($str, $sub_precedence) = self::create2($val);
                         if ($sub_precedence < $precedence) {
                             $s .= "($str)";
@@ -481,21 +495,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         }
                         $s .= self::$function_to_operator_map[$func];
                         $val = $sub_tree[1];
-                        if (!self::is_expr_of_function($val, "tuple")) {
-                            throw new \ErrorException("BUG");
-                        }
-                        $s .= "(";
-                        foreach ($val["sub_tree"] as $k => $sub) {
-                            if ($k !== 0) {
-                                $s .= ",";
-                            }
-                            if (self::is_expr_of_function($val, "tuple")) {
-                                $sub["expr"] = "";
-                            }
-                            list($str) = self::create2($sub);
-                            $s .= $str;
-                        }
-                        $s .= ")";
+                        $s .= self::create2($val)[0];
                         break;
                     case "lambda":
                         $precedence = self::$precedence_map[$func];
@@ -532,12 +532,12 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         }
                         break;
                     case "negate":
-                        $precedence = 100;
+                        $precedence = self::$precedence_map[$func];
                         list($str, $sub_precedence) = self::create2($sub_tree[0]);
-                        if ($sub_precedence < $precedence) {
-                            $s .= "(-($str))";
+                        if ($sub_precedence <= $precedence) {
+                            $s .= "-($str)";
                         } else {
-                            $s .= "(-$str)";
+                            $s .= "-$str";
                         }
                         break;
                     case "array":
@@ -552,7 +552,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         $s = "[$s]";
                         break;
                     default:
-F1:                     $precedence = 100;
+                        F1: $precedence = 100;
                         foreach ($sub_tree as $k => $sub) {
                             if ($k !== 0) {
                                 $s .= ",";
@@ -695,9 +695,10 @@ F1:                     $precedence = 100;
     }
 
 
-    protected static function get_next_expr($tokens, $index, $precedence)
+    protected static function get_next_expr($tokens, $index, $precedence, $allow_sql = false)
     {
         $token = @$tokens[$index];
+        $is_sql = false;
         if (is_string($token)) {
             switch ($token) {
                 case "+":
@@ -774,8 +775,11 @@ F1:                     $precedence = 100;
                             break;
                         case "WITH":
                         case "SELECT":
+                            if (!$allow_sql) {
+                                throw new \ErrorException("sql must in parentheses");
+                            }
                             list($val1, $index) = self::get_next_select($tokens, $index);
-                            $val1 = self::EXP_SUBQUERY($val1);
+                            $is_sql = true;
                             break;
                         default:
                             $val1 = self::EXP_IDENTIFIER_COLREF($token[1]);
@@ -789,6 +793,9 @@ F1:                     $precedence = 100;
                 return array($val1, $index);
             }
             $operator  = \is_string($token) ? $token : \strtoupper($token[1]);
+            if ($is_sql && !isset([")" => 1, "UNION" => 1][$operator])) {
+                throw new \ErrorException("unexpect token " . self::token_to_string($token));
+            }
             $old_index = $index;
             switch ($operator) {
                 case ")":
@@ -839,29 +846,33 @@ F1:                     $precedence = 100;
                     $token = @$tokens[++$index];
                     $sub_tree = array();
                     $to_upper_func_name = "";
+                    $sub_allow_sql = false;
                     if (self::is_expr_of($val1, self::T_IDENTIFIER_COLREF)) {
                         if (\count($val1["parts"]) != 1) {
                             throw new \ErrorException("expect FUNCTION NAME got " . self::create($val1));
                         }
                         $to_upper_func_name = \strtoupper($val1["parts"][0]);
+                        $sub_allow_sql = $to_upper_func_name === "";
                     } elseif (self::is_expr_of($val1, self::T_FUNCTION)) {
+                        if ($val1["expr"] === "") {
+                            throw new \ErrorException("BUG");
+                        }
+                        if ($val1["expr"] === "tuple") {
+                            throw new \ErrorException("tuple is not a PARAMETRIC_FUNCTION ");
+                        }
                         $val1["type"] = self::T_PARAMETRIC_FUNCTION;
                         $val1["sub_tree"] = array($val1["sub_tree"]);
                     } elseif (self::is_expr_of($val1, self::T_PARAMETRIC_FUNCTION)) {
                     } else {
                         throw new \ErrorException("expect FUNCTION NAME got " . self::create($val1));
                     }
-                    //AVG | MAX | MIN | SUM | COUNT
-                    //length | CHAR_LENGTH | CHARACTER_LENGTH
-                    //IF concat
-
                     if ($token !== ")") {
                         switch ($to_upper_func_name) {
                             case "COUNT":
                                 if (self::is_token_of($token, "DISTINCT")) {
                                     $token = @$tokens[++$index];
                                     $val1["parts"][0] = "countDistinct";
-                                }elseif($token==="*"){
+                                } elseif ($token === "*") {
                                     $token = @$tokens[++$index];
                                     if ($token !== ")") {
                                         throw new \ErrorException("expect ')' after 'count(*' got " . self::token_to_string($token));
@@ -883,8 +894,17 @@ F1:                     $precedence = 100;
                                 break;
                         }
                         for (;;) {
-                            list($expr, $index) = self::get_next_expr($tokens, $index, 0);
+                            list($expr, $index) = self::get_next_expr($tokens, $index, 0, $sub_allow_sql);
                             $token = @$tokens[$index];
+                            if ($sub_allow_sql && self::is_expr_of($expr, self::T_SQL_ALLOW_IN_SUBQUERY)) {
+                                if ($token !== ")") {
+                                    throw new \ErrorException("sql must in parentheses");
+                                }
+                                $val1 = self::EXP_SUBQUERY($expr);
+                                $index++;
+                                continue 3;
+                            }
+                            $sub_allow_sql = false;
                             if ($token === "->") {
                                 if (!self::is_expr_of($expr, self::T_FUNCTION)) {
                                     $sub_tree[] = $expr;
@@ -915,7 +935,7 @@ F1:                     $precedence = 100;
                             }
                         }
                     } else {
-F4:                     $index++;
+                        F4: $index++;
                     }
                     if (self::is_expr_of($val1, self::T_IDENTIFIER_COLREF)) {
                         if ($val1["parts"][0] === "") {
@@ -935,6 +955,19 @@ F4:                     $index++;
                         throw new \ErrorException("BUG");
                     }
                     continue 2;
+                case "GLOBAL":
+                    $token = @$tokens[++$index];
+                    if (self::is_token_of($token, "IN")) {
+                        $operator = "globalIn";
+                        goto F3;
+                    } elseif (self::is_token_of($token, "NOT")) {
+                        $token = @$tokens[++$index];
+                        if (self::is_token_of($token, "IN")) {
+                            $operator = "globalNotIn";
+                            goto F3;
+                        }
+                    }
+                    throw new \ErrorException("expect NOT | IN  after 'GLOBAL ... ' got " . self::token_to_string($token));
                 case "NOT":
                     $token = @$tokens[++$index];
                     if (self::is_token_of($token, "IN")) {
@@ -1015,15 +1048,26 @@ F4:                     $index++;
                     if (!self::is_token_of($token, "(")) {
                         throw new \ErrorException("expect '(' got " . self::token_to_string($token));
                     }
+
                     $token = @$tokens[++$index];
                     if ($token === ")") {
                         throw new \ErrorException("in-list cannot be empty");
                     }
                     $sub_tree = array();
+                    $sub_allow_sql = true;
                     for (;;) {
-                        list($expr, $index) = self::get_next_expr($tokens, $index, 0);
-                        $sub_tree[] = $expr;
+                        list($expr, $index) = self::get_next_expr($tokens, $index, 0, $sub_allow_sql);
                         $token = @$tokens[$index];
+                        if ($sub_allow_sql && self::is_expr_of($expr, self::T_SQL_ALLOW_IN_SUBQUERY)) {
+                            if ($token !== ")") {
+                                throw new \ErrorException("sql must in parentheses");
+                            }
+                            $val1 = self::EXP_FUNCTION($operator, array($val1, self::EXP_SUBQUERY($expr)));
+                            $index++;
+                            continue 3;
+                        }
+                        $sub_allow_sql = false;
+                        $sub_tree[] = $expr;
                         if ($token === ")") {
                             $index++;
                             break;
@@ -1070,29 +1114,46 @@ F4:                     $index++;
                     $index++;
                     continue 2;
                 case "UNION":
+                    if (!$allow_sql) {
+                        return array($val1, $index);
+                    }
+                    $unionPrecedence = 1;
+                    if ($unionPrecedence <= $precedence) {
+                        return array($val1, $old_index);
+                    }
                     $token = @$tokens[++$index];
                     if (!self::is_token_of($token, "ALL")) {
                         throw new \ErrorException("expect 'ALL' after 'UNION' got " . self::token_to_string($token));
                     }
-                    if (!self::is_expr_of($val1, self::T_SUBQUERY)) {
-                        throw new \ErrorException("expect (QUERY) before 'UNION ALL' ");
+                    if (self::is_expr_of($val1, self::T_SUBQUERY)) {
+                        if (self::hasAlias($val1)) {
+                            throw new \ErrorException("the (QUERY) used in UNION ALL cannot has alias");
+                        }
+                        $val1 = $val1["sub_tree"];
                     }
-                    list($val2, $index) = self::get_next_expr($tokens, $index + 1, 0);
-                    if (!self::is_expr_of($val2, self::T_SUBQUERY)) {
-                        throw new \ErrorException("expect (QUERY) after 'UNION ALL' ");
+                    if (self::is_expr_of($val1, self::T_SQL_SELECT)) {
+                        $val1 = self::SQL_UNION_ALL([$val1]);
                     }
-                    $query = $val1["sub_tree"];
-                    if ($query["type"] == self::T_SQL_SELECT) {
-                        $query = self::SQL_UNION_ALL([$query]);
+                    if (!self::is_expr_of($val1, self::T_SQL_UNION_ALL)) {
+                        throw new \ErrorException("expect (QUERY) in 'UNION ALL' ");
                     }
-                    $query2 = $val2["sub_tree"];
-                    if ($query2["type"] == self::T_SQL_SELECT) {
-                        $query2 = self::SQL_UNION_ALL([$query2]);
+                    list($val2, $index) = self::get_next_expr($tokens, $index + 1, $unionPrecedence, true);
+                    if (self::is_expr_of($val2, self::T_SUBQUERY)) {
+                        if (self::hasAlias($val2)) {
+                            throw new \ErrorException("the (QUERY) used in UNION ALL cannot has alias");
+                        }
+                        $val2 = $val1["sub_tree"];
                     }
-                    foreach ($query2["sub_tree"] as $q) {
-                        $query["sub_tree"][] = $q;
+                    if (self::is_expr_of($val2, self::T_SQL_SELECT)) {
+                        $val2 = self::SQL_UNION_ALL([$val2]);
                     }
-                    $val1["sub_tree"] = $query;
+                    if (!self::is_expr_of($val2, self::T_SQL_UNION_ALL)) {
+                        throw new \ErrorException("expect (QUERY) in 'UNION ALL' ");
+                    }
+                    foreach ($val2["sub_tree"] as $q) {
+                        $val1["sub_tree"][] = $q;
+                    }
+                    $is_sql = true;
                     continue 2;
                 default:
                     if (\is_string($token)) {
@@ -1395,9 +1456,6 @@ F4:                     $index++;
                 list($offset, $row_count) = array($row_count, $token[1]);
                 $token = @$tokens[++$index];
             }
-            if (self::is_token_of($token, "BY")) {
-                throw new \ErrorException("cannot LIMIT BY twice");
-            }
             $obj["LIMIT"] = array(
                 "offset" => $offset, "row_count" => $row_count
             );
@@ -1434,6 +1492,6 @@ F4:                     $index++;
     }
 }
 
-$p = ClickHouseSQLParser::parse_expr("select 1 in (select 1)");
+$p = ClickHouseSQLParser::parse("select (1,2) global in ((1,2),(3,4))");
 ClickHouseSQLParser::dump_expr($p);
 echo ClickHouseSQLParser::create($p);
