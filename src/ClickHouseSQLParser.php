@@ -1,284 +1,124 @@
 <?php
-
+//count(distinct x) => OK
+//INTERVAL          => OK
+//EXTRACT           => OK
+//Conditional Expression => NO
+//Conditional Operator(a?b:c) => OK
+//Lambda Creation Operator => OK
+//Array Creation Operator => OK
+//Parametric Aggregate Functions => OK
 namespace ClickHouseSQLParser;
 
-class ClickHouseSQLParser
+require_once __DIR__ . "/ClickHouseSQLParserTokenizer.php";
+
+class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
 {
-    const T_BLANK = 1000;
-    const T_COMMENT = 1010;
-    const T_COMMENT_SINGLE_LINE = 1011;
-    const T_COMMENT_MULTI_LINE = 1012;
-    const T_WHITESPACE = 1100;
-    const T_CONSTANT = 2100;
-    const T_CONSTANT_NULL = 2110;
-    const T_CONSTANT_NUMBER = 2120;
-    const T_CONSTANT_LNUMBER = 2121;
-    const T_CONSTANT_DNUMBER = 2122;
-    const T_CONSTANT_STRING  = 2131;
-    const T_IDENTIFIER = 3100;
-    const T_IDENTIFIER_ASTERISK = 3150;
-    const T_IDENTIFIER_TABLE = 3140;
-    const T_IDENTIFIER_COLREF = 3130;
-    const T_IDENTIFIER_NOQUOTE = 3110;
-    const T_IDENTIFIER_QUOTE = 3120;
-    const T_IDENTIFIER_BACKQUOTE = 3121;
-    const T_IDENTIFIER_DOUBLEQUOTE = 3122;
-    const T_EXP_ANY = 5000;
-    const T_FUNCTION = 6000;
-    const T_SUBQUERY = 7000;
-    const T_SQL = 9000;
-    const T_SQL_SELECT    = 9001;
-    const T_SQL_UNION_ALL = 9002;
-    const T_SQL_ANY       = 9999;
-
-    protected static $type_child_map = array(
-        self::T_BLANK => array(
-            self::T_COMMENT => 1,
-            self::T_COMMENT_SINGLE_LINE => 1,
-            self::T_COMMENT_MULTI_LINE => 1,
-            self::T_WHITESPACE => 1,
-        ),
-        self::T_COMMENT => array(
-            self::T_COMMENT_SINGLE_LINE => 1,
-            self::T_COMMENT_MULTI_LINE => 1,
-        ),
-        self::T_CONSTANT => array(
-            self::T_CONSTANT_NULL => 1,
-            self::T_CONSTANT_NUMBER => 1,
-            self::T_CONSTANT_LNUMBER => 1,
-            self::T_CONSTANT_DNUMBER => 1,
-            self::T_CONSTANT_STRING => 1,
-        ),
-        self::T_IDENTIFIER => array(
-            self::T_IDENTIFIER_ASTERISK => 1,
-            self::T_IDENTIFIER_TABLE => 1,
-            self::T_IDENTIFIER_COLREF => 1,
-            self::T_IDENTIFIER_NOQUOTE => 1,
-            self::T_IDENTIFIER_QUOTE => 1,
-            self::T_IDENTIFIER_BACKQUOTE => 1,
-            self::T_IDENTIFIER_DOUBLEQUOTE => 1,
-        ),
-        self::T_IDENTIFIER_QUOTE => array(
-            self::T_IDENTIFIER_BACKQUOTE => 1,
-            self::T_IDENTIFIER_DOUBLEQUOTE => 1,
-        ),
-        self::T_SQL => array(
-            self::T_SQL_SELECT => 1,
-            self::T_SQL_UNION_ALL => 1,
-            self::T_SQL_ANY => 1,
-        ),
+    protected static $precedence_map = array(
+        "as" => 1,
+        "lambda" => 2,
+        "if" => 2,
+        "or" => 3,
+        "and" => 4,
+        "not" => 5,
+        "between" => 6,
+        "notBetween" => 6,
+        "equals" => 7,
+        "notEquals" => 7,
+        "greater" => 7,
+        "greaterOrEquals" => 7,
+        "less" => 7,
+        "lessOrEquals" => 7,
+        "isNull" => 8,
+        "isNotNull" => 8,
+        "like" => 8,
+        "notLike" => 8,
+        "in" => 8,
+        "notIn" => 8,
+        "concat" => 9,
+        "plus" => 10,
+        "minus" => 10,
+        "multiply" => 11,
+        "divide" => 11,
+        "modulo" => 11,
+        "interval" => 12,
+        "extract" => 12,
+        "negate" => 13,
     );
 
-    protected static $type_name_map = array(
-        self::T_BLANK => "T_BLANK",
-        self::T_COMMENT => "T_COMMENT",
-        self::T_COMMENT_SINGLE_LINE => "T_COMMENT_SINGLE_LINE",
-        self::T_COMMENT_MULTI_LINE => "T_COMMENT_MULTI_LINE",
-        self::T_WHITESPACE => "T_WHITESPACE",
-        self::T_CONSTANT => "T_CONSTANT",
-        self::T_CONSTANT_NULL => "T_CONSTANT_NULL",
-        self::T_CONSTANT_NUMBER => "T_CONSTANT_NUMBER",
-        self::T_CONSTANT_LNUMBER => "T_CONSTANT_LNUMBER",
-        self::T_CONSTANT_DNUMBER => "T_CONSTANT_DNUMBER",
-        self::T_CONSTANT_STRING => "T_CONSTANT_STRING",
-        self::T_IDENTIFIER => "T_IDENTIFIER",
-        self::T_IDENTIFIER_TABLE => "T_IDENTIFIER_TABLE",
-        self::T_IDENTIFIER_ASTERISK => "T_IDENTIFIER_ASTERISK",
-        self::T_IDENTIFIER_COLREF => "T_IDENTIFIER_COLREF",
-        self::T_IDENTIFIER_NOQUOTE => "T_IDENTIFIER_NOQUOTE",
-        self::T_IDENTIFIER_QUOTE => "T_IDENTIFIER_QUOTE",
-        self::T_IDENTIFIER_BACKQUOTE => "T_IDENTIFIER_BACKQUOTE",
-        self::T_IDENTIFIER_DOUBLEQUOTE => "T_IDENTIFIER_DOUBLEQUOTE",
-        self::T_EXP_ANY => "T_EXP_ANY",
-        self::T_FUNCTION => "T_FUNCTION",
-        self::T_SUBQUERY => "T_SUBQUERY",
-        self::T_SQL => "T_SQL",
-        self::T_SQL_SELECT => "T_SQL_SELECT",
-        self::T_SQL_UNION_ALL => "T_SQL_UNION_ALL",
-        self::T_SQL_ANY => "T_SQL_ANY",
+    protected static $operator_to_function_map = array(
+        "=" => "equals", "!=" => "notEquals", "<>" => "notEquals", ">" => "greater", ">=" => "greaterOrEquals", "<" => "less", "<=" => "lessOrEquals",
+        "+" => "plus", "-" => "minus",
+        "*" => "multiply", "%" => "modulo", "/" => "divide", "||" => "concat",
+        "OR" => "or", "AND" => "and", "LIKE" => "like",
     );
 
-    public static function type_name($code)
-    {
-        return self::$type_name_map[$code];
-    }
-
-    public static function is_type_of($sub_type, $type)
-    {
-        return $sub_type === $type || isset(self::$type_child_map[$type][$sub_type]);
-    }
-
-    public static function is_token_of($token, $type)
-    {
-        if ($token === NULL) {
-            return false;
-        }
-        if (!\is_int($type)) { //operator keywords
-            if (\is_array($token)) {
-                return \strcasecmp($token[1], $type) === 0;
-            } else {
-                return \strcasecmp($token, $type) === 0;
-            }
-        }
-        if (\is_array($token)) {
-            $token = $token[0];
-        } else {
-            return false;
-        }
-        return self::is_type_of($token, $type);
-    }
-
-    public static function is_expr_of($expr, $type)
-    {
-        return self::is_type_of($expr["type"], $type);
-    }
-
-    public static $EXP_CONSTANT_NULL = array(
-        "type" => self::T_CONSTANT_NULL
+    protected static $function_to_operator_map = array(
+        "equals" => "=",
+        "notEquals" => "!=",
+        "greater" => ">",
+        "greaterOrEquals" => ">=",
+        "less" => "<",
+        "lessOrEquals" => "<=",
+        "plus" => "+",
+        "minus" => "-",
+        "multiply" => "*",
+        "divide" => "/",
+        "modulo" => "%",
+        "and" => " and ",
+        "or" => " or ",
+        "like" => " like ",
+        "notLike" => " not like ",
+        "in" => " in ",
+        "notIn" => " not in ",
+        "lambda" => "->",
     );
 
-    public static function EXP_CONSTANT_LNUMBER($num)
-    {
-        return array(
-            "type" => self::T_CONSTANT_LNUMBER,
-            "expr" => \strval($num),
-        );
-    }
-
-    public static function EXP_CONSTANT_DNUMBER($num)
-    {
-        return array(
-            "type" => self::T_CONSTANT_DNUMBER,
-            "expr" => \strval($num),
-        );
-    }
-
-    public static function EXP_CONSTANT_STRING($str)
-    {
-        return array(
-            "type" => self::T_CONSTANT_STRING,
-            "expr" => \strval($str),
-        );
-    }
-
-    public static $EXP_CONSTANT_0 = array(
-        "type" => self::T_CONSTANT_LNUMBER,
-        "expr" => "0",
+    protected static $keywords_map = array(
+        "WITH" => 1, "SELECT" => 1, "FROM" => 1, "FINAL" => 1, "HAVING" => 1,
+        "WHERE" => 1, "PREWHERE" => 1, "ORDER" => 1, "LIMIT" => 1, "CROSS" => 1,
+        "INNER" => 1, "LEFT" => 1, "RIGHT" => 1, "FULL" => 1, "JOIN" => 1,
+        "ON" => 1, "USING" => 1, "ARRAY" => 1, "ALL" => 1, "ANY" => 1, "ASOF" => 1,
     );
 
-
-    public static $EXP_CONSTANT_1 = array(
-        "type" => self::T_CONSTANT_LNUMBER,
-        "expr" => "1",
+    protected static $interval_map = array(
+        "SECOND" => "toIntervalSecond",
+        "MINUTE" => "toIntervalMinute",
+        "HOUR" => "toIntervalHour",
+        "DAY" => "toIntervalDay",
+        "WEEK" => "toIntervalWeek",
+        "MONTH" => "toIntervalMonth",
+        "QUARTER" => "toIntervalQuarter",
+        "YEAR" => "toIntervalYear",
     );
 
-    public static $EXP_CONSTANT_EMPTY_STRING = array(
-        "type" => self::T_CONSTANT_STRING,
-        "expr" => "",
+    protected static $interval_map_reverse = array(
+        "toIntervalSecond" => "SECOND",
+        "toIntervalMinute" => "MINUTE",
+        "toIntervalHour" => "HOUR",
+        "toIntervalDay" => "DAY",
+        "toIntervalWeek" => "WEEK",
+        "toIntervalMonth" => "MONTH",
+        "toIntervalQuarter" => "QUARTER",
+        "toIntervalYear" => "YEAR",
     );
 
-    public static $EXP_IDENTIFIER_ASTERISK = array(
-        "type" => self::T_IDENTIFIER_ASTERISK
+    protected static $extract_map = array(
+        "SECOND" => "toSecond",
+        "MINUTE" => "toMinute",
+        "HOUR" => "toHour",
+        "DAY" => "toDayOfMonth",
+        "MONTH" => "toMonth",
+        "YEAR" => "toYear",
     );
 
-    public static function EXP_IDENTIFIER_COLREF($parts)
-    {
-        if (!is_array($parts)) {
-            $parts = self::parse_colref($parts);
-        }
-        if (\count($parts) === 0) {
-            throw new \ErrorException("colref cannot be empty");
-        }
-        return array(
-            "type" => self::T_IDENTIFIER_COLREF,
-            "expr" => "",
-            "parts" => $parts,
-        );
-    }
-
-    public static function EXP_IDENTIFIER_TABLE($parts)
-    {
-        if (!is_array($parts)) {
-            $parts = self::parse_colref($parts);
-        }
-        if (\count($parts) === 0) {
-            throw new \ErrorException("table cannot be empty");
-        }
-        return array(
-            "type" => self::T_IDENTIFIER_TABLE,
-            "expr" => "",
-            "parts" => $parts,
-        );
-    }
-
-    public static function EXP_FUNCTION($name, $sub_tree)
-    {
-        return array(
-            "type" => self::T_FUNCTION,
-            "expr" => $name,
-            "sub_tree" => $sub_tree,
-        );
-    }
-
-    public static function EXP_ANY($str)
-    {
-        return array(
-            "type" => self::T_EXP_ANY,
-            "expr" => $str,
-        );
-    }
-
-    public static function EXP_SUBQUERY($expr)
-    {
-        return array(
-            "type" => self::T_SUBQUERY,
-            "expr" => "",
-            "sub_tree" => $expr,
-        );
-    }
-
-    public static function SQL_ANY($str)
-    {
-        return array(
-            "type" => self::T_SQL_ANY,
-            "expr" => $str,
-        );
-    }
-
-    public static function SQL_UNION_ALL($sub_tree)
-    {
-        return array(
-            "type" => self::T_SQL_UNION_ALL,
-            "expr" => "",
-            "sub_tree" => $sub_tree,
-        );
-    }
-
-    public static function join_tokens($tokens)
-    {
-        foreach ($tokens as &$token) {
-            if (\is_array($token)) {
-                $token = $token[1];
-            }
-        }
-        return \implode($tokens);
-    }
-
-    public static function token_to_constant_expr($token)
-    {
-        switch ($token[0]) {
-            case self::T_CONSTANT_NULL:
-                return self::$EXP_CONSTANT_NULL;
-            case self::T_CONSTANT_LNUMBER:
-                return  self::EXP_CONSTANT_LNUMBER($token[1]);
-            case self::T_CONSTANT_DNUMBER:
-                return  self::EXP_CONSTANT_DNUMBER($token[1]);
-            case self::T_CONSTANT_STRING:
-                return self::EXP_CONSTANT_STRING(self::mysql_decode_str($token[1]));
-            default:
-                throw new \ErrorException("BUG");
-        }
-    }
+    protected static $extract_map_reverse = array(
+        "toSecond" => "SECOND",
+        "toMinute" => "MINUTE",
+        "toHour" => "HOUR",
+        "toDayOfMonth" => "DAY",
+        "toMonth" => "MONTH",
+        "toYear" => "YEAR",
+    );
 
     public static function replace_expr($expr, $replace_expr)
     {
@@ -291,47 +131,11 @@ class ClickHouseSQLParser
         return $replace_expr;
     }
 
+
     public static function compact_expr($expr, $compact_and = 1, $compact_or = 1, $compact_concat = 1)
     {
         self::internal_compact_expr($expr, $compact_and, $compact_or, $compact_concat);
         return $expr;
-    }
-
-    public static function compact_tokens($tokens, $check_error = 1, $remove_blank = 1)
-    {
-        if ($check_error) {
-            $tokens = self::post_process_check_error($tokens);
-        }
-        if ($remove_blank) {
-            $tokens = self::post_process_remove_blank($tokens);
-        }
-        return $tokens;
-    }
-
-    public static function dump_expr($expr, $return = false)
-    {
-        self::convert_expr_name($expr);
-        $s = json_encode($expr, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-        if (!$return) {
-            echo $s;
-        }
-        return $s;
-    }
-
-    public static function dump_tokens($tokens, $return = false)
-    {
-        $s = "";
-        foreach ($tokens as $k => &$token) {
-            if (\is_array($token)) {
-                $s .= "$k: (" . self::type_name($token[0]) . ") " . \var_export($token[1], true) . "\n";
-            } else {
-                $s .= "$k: " . \var_export($token, true) . "\n";
-            }
-        }
-        if (!$return) {
-            echo $s;
-        }
-        return $s;
     }
 
     protected static function internal_compact_expr(&$expr, $and, $or, $concat)
@@ -349,7 +153,7 @@ class ClickHouseSQLParser
                         }
                         $sub_tree = array();
                         foreach ($expr["sub_tree"] as $sub_expr) {
-                            if (self::is_expr_of($sub_expr, self::T_FUNCTION) && $sub_expr["expr"] === "and") {
+                            if (self::is_expr_of_function($sub_expr, "and")) {
                                 foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
                                     $sub_tree[] = $sub_sub_expr;
                                 }
@@ -377,7 +181,7 @@ class ClickHouseSQLParser
                         }
                         $sub_tree = array();
                         foreach ($expr["sub_tree"] as $sub_expr) {
-                            if (self::is_expr_of($sub_expr, self::T_FUNCTION) && $sub_expr["expr"] === "or") {
+                            if (self::is_expr_of_function($sub_expr, "or")) {
                                 foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
                                     $sub_tree[] = $sub_sub_expr;
                                 }
@@ -405,7 +209,7 @@ class ClickHouseSQLParser
                         }
                         $sub_tree = array();
                         foreach ($expr["sub_tree"] as $sub_expr) {
-                            if (self::is_expr_of($sub_expr, self::T_FUNCTION) && $sub_expr["expr"] === "concat") {
+                            if (self::is_expr_of_function($sub_expr, "concat")) {
                                 foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
                                     $sub_tree[] = $sub_sub_expr;
                                 }
@@ -466,601 +270,11 @@ class ClickHouseSQLParser
         }
     }
 
-    protected static function convert_expr_name(&$expr)
-    {
-        switch ($expr["type"]) {
-            case self::T_FUNCTION:
-            case self::T_SQL_UNION_ALL:
-                foreach ($expr["sub_tree"] as &$sub_expr) {
-                    self::convert_expr_name($sub_expr);
-                }
-                break;
-            case self::T_SUBQUERY:
-                self::convert_expr_name($expr["sub_tree"]);
-                break;
-            case self::T_SQL_SELECT:
-                foreach (["WITH", "SELECT", "FROM", "ARRAYJOIN", "GROUPBY", "ORDERBY", "SETTINGS"] as $key) {
-                    if (isset($expr[$key])) {
-                        foreach ($expr[$key] as &$sub_expr) {
-                            self::convert_expr_name($sub_expr);
-                        }
-                    }
-                }
-                foreach (["PREWHERE", "WHERE", "HAVING"] as $key) {
-                    if (isset($expr[$key])) {
-                        self::convert_expr_name($expr[$key]);
-                    }
-                }
-                break;
-        }
-        foreach (["using"] as $key) {
-            if (isset($expr[$key])) {
-                foreach ($expr[$key] as &$sub_expr) {
-                    self::convert_expr_name($sub_expr);
-                }
-            }
-        }
-        foreach (["on"] as $key) {
-            if (isset($expr[$key])) {
-                self::convert_expr_name($expr[$key]);
-            }
-        }
-        $expr["type"] = self::type_name($expr["type"]);
-    }
-
-    public static function parse_colref($str)
-    {
-        static $map = array("0" => "\0", "n" => "\n", "r" => "\r", "\\" => "\\", "'" => "'", "\"" => "\"", "Z" => "\032", "`" => "`");
-        $index = 0;
-        $ss = array();
-        $s = "";
-        $c = @$str[$index];
-        $quote = NULL;
-        for (;;) {
-            switch ($c) {
-                case "\"":
-                case "`":
-                    if ($quote !== NULL) {
-                        throw new \ErrorException("cannot parse $str");
-                    }
-                    $quote = $c;
-                    $c = @$str[++$index];
-                    for (;;) {
-                        switch ($c) {
-                            case $quote:
-                                if ($s === "") {
-                                    throw new \ErrorException("cannot parse $str");
-                                }
-                                $c = @$str[++$index];
-                                break 2;
-                            case "\\":
-                                $c = @$str[++$index];
-                                if ($c === "") {
-                                    throw new \ErrorException("cannot parse $str");
-                                }
-                                if (!isset($map[$c])) {
-                                    throw new \ErrorException("cannot parse $str");
-                                }
-                                $s .= $map[$c];
-                                $c = @$str[++$index];
-                                break;
-                            case "":
-                                throw new \ErrorException("cannot parse $str");
-                            default:
-                                $s .= $c;
-                                $c = @$str[++$index];
-                        }
-                    }
-                    break;
-                case ".":
-                    if ($s === "") {
-                        throw new \ErrorException("cannot parse $str");
-                    }
-                    $ss[] = $s;
-                    $s = "";
-                    $quote = NULL;
-                    $c = @$str[++$index];
-                    break;
-                case " ":
-                    $c = @$str[++$index];
-                    break;
-                case "":
-                    if ($s === "") {
-                        throw new \ErrorException("cannot parse $str");
-                    }
-                    $ss[] = $s;
-                    return $ss;
-                default:
-                    if ($quote !== NULL) {
-                        throw new \ErrorException("cannot parse $str");
-                    }
-                    $s .= $c;
-                    $c = @$str[++$index];
-            }
-        }
-        throw new \ErrorException("BUG");
-    }
-
-
-    protected static function token_to_string($token)
-    {
-        if ($token === NULL) {
-            return "(EOF)";
-        } elseif (!is_array($token)) {
-            return $token;
-        } else {
-            return $token[1];
-        }
-    }
-
-    protected static function generate_splitter_map_set_map($str, &$map)
-    {
-        if ($str === "") {
-            $map[""] = true;
-        } else {
-            if (!isset($map[$str[0]])) {
-                $map[$str[0]] = array();
-            }
-            self::generate_splitter_map_set_map(\substr($str, 1), $map[$str[0]]);
-        }
-    }
-
-    protected static function generate_splitter_map($splitters)
-    {
-        $map = array();
-        foreach ($splitters as $splitter) {
-            self::generate_splitter_map_set_map($splitter, $map);
-        }
-        return $map;
-    }
-
-    protected static function is_valid_name_char($char)
-    {
-        $c = ord($char);
-        return ($c >= 48 && $c <= 57) || ($c >= 65 && $c <= 90) || $c == 95 || ($c >= 97 && $c <= 122) || $c >= 127;
-    }
-
-    protected static function is_valid_name_start_char($char)
-    {
-        $c = ord($char);
-        return ($c >= 65 && $c <= 90) || $c == 95 || ($c >= 97 && $c <= 122) || $c >= 127;
-    }
-
-    protected static function get_splitters_map()
-    {
-        static $splitters_map;
-        if ($splitters_map === NULL) {
-            $splitters = array(
-                "<=>",
-                "\r\n", "!=", ">=", "<=", "<>", "<<", ">>", ":=", "&&", "||", "@@", "->",
-                "[", "]", "{", "}",
-                ">", "<", "!", "^", "&", "|", "=", "(", ")", "\t", "\r", "\n", " ", "@", ":", "+", "-", "*", "/", "%", ";", ",", ".", ":", "?", "#", "~", "$",
-                "\"", "'", "`", "\\",
-                //support above and: / /* */ -- - ->
-            );
-            $splitters_map = self::generate_splitter_map($splitters);
-        }
-        return $splitters_map;
-    }
-
-    protected static function get_next_splitter($last, $str, $index, $map)
-    {
-        $c = @$str[$index];
-        if ($c === "") {
-            if (@$map[""] === true) {
-                return array($last, $index);
-            }
-            return false;
-        }
-        if (isset($map[$c])) {
-            $r = self::get_next_splitter($last . $c, $str, $index + 1, $map[$c]);
-            if ($r) {
-                return $r;
-            }
-        }
-        if ($last === "") {
-            return false;
-        } elseif (@$map[""] === true) {
-            return array($last, $index);
-        }
-        return false;
-    }
-
-    //start with [\\a-zA-Z_\x7f-\xff][
-    protected static function get_next_string($str, $index)
-    {
-        $s = "";
-        $c = @$str[$index];
-        for (;;) {
-            if (self::is_valid_name_char($c)) {
-                $s .= $c;
-                $c = @$str[++$index];
-            } else {
-                break;
-            }
-        }
-        if (\strcasecmp("NULL", $s) == 0) {
-            return array(array(self::T_CONSTANT_NULL, $s), $index);
-        }
-        return array(array(self::T_IDENTIFIER_NOQUOTE, $s), $index);
-    }
-
-    //start with [\'\"\`]
-    protected static function get_next_quote($str, $index)
-    {
-        $s = $quote = $str[$index];
-        $c = @$str[++$index];
-        for (;;) {
-            if ($c === "\\") {
-                $s .= $c;
-                $c = @$str[++$index];
-                if ($c === "") {
-                    break;
-                }
-                $s .= $c;
-                $c = @$str[++$index];
-            } elseif ($c === $quote) {
-                $s .= $c;
-                $map = array(
-                    "\"" => self::T_IDENTIFIER_DOUBLEQUOTE,
-                    "'" => self::T_CONSTANT_STRING,
-                    "`" => self::T_IDENTIFIER_BACKQUOTE,
-                );
-                return array(array($map[$quote], $s, NULL), $index + 1);
-            } else {
-                $s .= $c;
-                $c = @$str[++$index];
-            }
-        }
-        throw new \ErrorException("cannot find matched $quote in string $s");
-    }
-
-    //start with [\#\/]
-    protected static function get_next_comment($str, $index)
-    {
-        if (@$str[$index] === "/" && @$str[$index + 1] === "*") {
-            $s = $str[$index]; // /
-            $s .= $str[++$index]; // *
-            $c = @$str[++$index];
-            for (;;) {
-                if ($c === "*" && @$str[$index + 1] === "/") {
-                    $s .= $c; // *
-                    $s .= $str[++$index]; // /
-                    ++$index;
-                    break;
-                } elseif ($c === "") {
-                    break;
-                } else {
-                    $s .= $c;
-                    $c = @$str[++$index];
-                }
-            }
-            return array(array(self::T_COMMENT_MULTI_LINE, $s), $index);
-        } elseif (@$str[$index] === "-" && @$str[$index + 1] === "-") {
-            $s = "";
-            $c = $str[$index];
-            for (;;) {
-                if ($c === "\r" || $c === "\n" || $c === "") {
-                    break;
-                } else {
-                    $s .= $c;
-                    $c = @$str[++$index];
-                }
-            }
-            return array(array(self::T_COMMENT_SINGLE_LINE, $s), $index);
-        } else {
-            return array(false, $index);
-        }
-    }
-
-    //start with [\t\r\n ]
-    protected static function get_next_whitespace($str, $index)
-    {
-        static $map = array(" " => 1, "\r" => 1, "\n" => 1, "\t" => 1);
-        $s = $c = $str[$index];
-        for (;;) {
-            if (isset($map[$c])) {
-                $s .= $c;
-                $c = @$str[++$index];
-            } else {
-                break;
-            }
-        }
-        return array(array(self::T_WHITESPACE, $s), $index);
-    }
-
-    protected static function get_next_token($str, $index)
-    {
-        static $map = array(
-            "`" => 1, "'" => 1, "\"" => 1,
-            "-" => 2, "/" => 2,
-            //"\$" => 3,
-            "0" => 4, "1" => 4, "2" => 4, "3" => 4, "4" => 4, "5" => 4, "6" => 4, "7" => 4, "8" => 4, "9" => 4,
-            " " => 5, "\t" => 5, "\r" => 5, "\n" => 5,
-            "" => 6,
-        );
-        $c = @$str[$index];
-        $code = isset($map[$c]) ? $map[$c] : -1;
-        switch ($code) {
-            case 1:
-                list($token, $index) = self::get_next_quote($str, $index);
-                break;
-            case 2:
-                list($token, $index) = self::get_next_comment($str, $index);
-                break;
-            case 4:
-                list($token, $index) = self::get_next_number($str, $index);
-                break;
-            case 5:
-                list($token, $index) = self::get_next_whitespace($str, $index);
-                break;
-            case 6:
-                return array(false, $index); //END
-            case -1:
-                break;
-            default:
-                throw new \ErrorException("BUG");
-        }
-        if ($code === -1 || $token === false) {
-            if (self::is_valid_name_start_char($c)) {
-                return self::get_next_string($str, $index);
-            } else {
-                if (($r = self::get_next_splitter("", $str, $index, self::get_splitters_map()))) {
-                    return $r;
-                } else {
-                    throw new \ErrorException("unkown char $c (" . ord($c) . ")");
-                }
-            }
-        }
-        return array($token, $index);
-    }
-
-    protected static function get_next_number($str, $index)
-    {
-        static $map = array(
-            "0" => 0, "1" => 1, "2" => 2, "3" => 3, "4" => 4, "5" => 5, "6" => 6, "7" => 7, "8" => 8, "9" => 9,
-            "A" => 10, "a" => 10, "B" => 11, "b" => 11, "C" => 12, "c" => 12, "D" => 13, "d" => 13, "E" => 14, "e" => 14, "F" => 15, "f" => 15,
-            "" => 16, "." => 17,
-            "X" => 18, "x" => 18,
-            "+" => 19, "-" => 20,
-        );
-        $is_float = false;
-        $s = "";
-        $state = 0;
-        $c = @$str[$index];
-        for (;;) {
-            switch ($state) {
-                case 0:
-                    switch ($map[$c]) { //初始状态，可以接受数字和.输入
-                        case 0:
-                            $s .= $c;
-                            $state = 1;
-                            break;
-                        case 1:
-                        case 2:
-                        case 3:
-                        case 4:
-                        case 5:
-                        case 6:
-                        case 7:
-                        case 8:
-                        case 9:
-                            $s .= $c;
-                            $state = 2;
-                            break;
-                        default:
-                            throw new \ErrorException("BUG");
-                    }
-                    $c = @$str[++$index];
-                    break;
-                case 1: //0~
-                    $case = isset($map[$c]) ? $map[$c] : -1;
-                    switch ($case) {
-                        case 14: //E
-                            $s .= $c;
-                            $state = 7;
-                            break;
-                        case 17: //.
-                            $s .= $c;
-                            $state = 8;
-                            break;
-                        case 16: // ''
-                        default:
-                            break 3;
-                    }
-                    $c = @$str[++$index];
-                    break;
-                case 2: //[1-9]~
-                    $case = isset($map[$c]) ? $map[$c] : -1;
-                    switch ($case) {
-                        case 0:
-                        case 1:
-                        case 2:
-                        case 3:
-                        case 4:
-                        case 5:
-                        case 6:
-                        case 7:
-                        case 8:
-                        case 9:
-                            $s .= $c;
-                            break;
-                        case 14: //E
-                            $s .= $c;
-                            $state = 7;
-                            break;
-                        case 17: // .
-                            $s .= $c;
-                            $state = 8;
-                            break;
-                        case 16: // ''
-                        default:
-                            break 3;
-                    }
-                    $c = @$str[++$index];
-                    break;
-                case 7: //0E
-                    $case = isset($map[$c]) ? $map[$c] : -1;
-                    switch ($case) {
-                        case 0:
-                        case 1:
-                        case 2:
-                        case 3:
-                        case 4:
-                        case 5:
-                        case 6:
-                        case 7:
-                        case 8:
-                        case 9:
-                            $s .= $c;
-                            $state = 11;
-                            break;
-                        case 19:
-                        case 20:
-                            $s .= $c;
-                            $state = 12;
-                            break;
-                        case 16:
-                        default:
-                            $index--;
-                            $s = \substr($s, 0, -1);
-                            break 3;
-                    }
-                    $c = @$str[++$index];
-                    break;
-                case 8: //1.
-                    $is_float = true;
-                    $case = isset($map[$c]) ? $map[$c] : -1;
-                    switch ($case) {
-                        case 0:
-                        case 1:
-                        case 2:
-                        case 3:
-                        case 4:
-                        case 5:
-                        case 6:
-                        case 7:
-                        case 8:
-                        case 9:
-                            $s .= $c;
-                            break;
-                        case 14:
-                            $s .= $c;
-                            $state = 7;
-                            break;
-                        case 16: // ''
-                        default:
-                            break 3;
-                    }
-                    $c = @$str[++$index];
-                    break;
-                case 11: //0E1
-                    $is_float = true;
-                    $case = isset($map[$c]) ? $map[$c] : -1;
-                    switch ($case) {
-                        case 0:
-                        case 1:
-                        case 2:
-                        case 3:
-                        case 4:
-                        case 5:
-                        case 6:
-                        case 7:
-                        case 8:
-                        case 9:
-                            $s .= $c;
-                            break;
-                        case 16:
-                        default:
-                            break 3;
-                    }
-                    $c = @$str[++$index];
-                    break;
-                case 12: //0E+
-                    $case = isset($map[$c]) ? $map[$c] : -1;
-                    switch ($case) {
-                        case 0:
-                        case 1:
-                        case 2:
-                        case 3:
-                        case 4:
-                        case 5:
-                        case 6:
-                        case 7:
-                        case 8:
-                        case 9:
-                            $s .= $c;
-                            $state = 11;
-                            break;
-                        case 16:
-                        default:
-                            $index -= 2;
-                            $s = \substr($s, 0, -2);
-                            break 3;
-                    }
-                    $c = @$str[++$index];
-                    break;
-                default:
-                    throw new \ErrorException("BUG");
-            }
-        }
-        return array(array($is_float ? self::T_CONSTANT_DNUMBER : self::T_CONSTANT_LNUMBER, $s), $index);
-    }
-
-    protected static function post_process_check_error($tokens)
-    {
-        $last_token = NULL;
-        foreach ($tokens as $token) {
-            if (self::is_token_of($token, self::T_CONSTANT) || self::is_token_of($token, self::T_IDENTIFIER)) {
-                if ($last_token !== NULL) {
-                    throw new \ErrorException("unkown string {$token[1]} after {$last_token[1]}");
-                } else {
-                    $last_token = $token;
-                }
-            } else {
-                $last_token = NULL;
-            }
-        }
-        return $tokens;
-    }
-
-    protected static function post_process_remove_blank($tokens)
-    {
-        $new_tokens = array();
-        foreach ($tokens as $token) {
-            if (!self::is_token_of($token, self::T_BLANK)) {
-                $new_tokens[] = $token;
-            }
-        }
-        return $new_tokens;
-    }
-
-    public static function token_get_all($str)
-    {
-        if ($str === "") {
-            return array();
-        }
-        $tokens = array();
-        $index = 0;
-        for (;;) {
-            list($token, $index) = self::get_next_token($str, $index);
-            if ($token === false) {
-                break;
-            } else {
-                $tokens[] = $token;
-            }
-        }
-        return $tokens;
-    }
-
-
 
     public static function parse($sql)
     {
         if (preg_match("{^[\s(]*(?:WITH|SELECT)\s}si", $sql)) {
-            $tokens = self::token_get_all($sql);
-            $tokens = self::post_process_check_error($tokens);
-            $tokens = self::post_process_remove_blank($tokens);
+            $tokens = self::token_get_all($sql, true);
             list($subquery, $index) = self::get_next_expr($tokens, 0, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
@@ -1076,9 +290,7 @@ class ClickHouseSQLParser
 
     public static function parse_expr($str)
     {
-        $tokens = self::token_get_all($str);
-        $tokens = self::post_process_check_error($tokens);
-        $tokens = self::post_process_remove_blank($tokens);
+        $tokens = self::token_get_all($str, true);
         list($expr, $index) = self::get_next_expr($tokens, 0, 0);
         if ($index != \count($tokens)) {
             throw new \ErrorException("cannot parse as expr, some token left");
@@ -1143,45 +355,7 @@ class ClickHouseSQLParser
         }
     }
 
-    public static function backquote($str)
-    {
-        return "`" . \strtr($str, array("\000" => "\\0", "\n" => "\\n", "\r" => "\\r", "\\" => "\\\\", "'" => "\\'", "\"" => "\\\"", "`" => "\`")) . "`";
-    }
-
-    public static function mysql_decode_str($str)
-    {
-        if (@$str[0] === "'") {
-            return \strtr(substr($str, 1, -1), array("\\0" => "\0", "\\n" => "\n", "\\r" => "\r", "\\\\" => "\\", "\\'" => "'", "\\\"" => "\"", "\\Z" => "\032"));
-        } else {
-            return \strcasecmp($str, "NULL") ? $str : NULL;
-        }
-    }
-
-    public static function mysql_encode_str($str, $noquote = 0)
-    {
-        if ($str === NULL) {
-            return "NULL";
-        } else {
-            return $noquote ? $str : "'" . \strtr($str, array("\000" => "\\0", "\n" => "\\n", "\r" => "\\r", "\\" => "\\\\", "'" => "\\'", "\"" => "\\\"")) . "'";
-        }
-    }
-
-    public static function is_expr_const_true($p)
-    {
-        return self::is_expr_of($p, self::T_CONSTANT_LNUMBER) && $p["expr"] !== "0";
-    }
-
-    public static function is_expr_const_false($p)
-    {
-        return self::is_expr_of($p, self::T_CONSTANT_LNUMBER) && $p["expr"] === "0";
-    }
-
-    public static function is_expr_const_empty_string($p)
-    {
-        return self::is_expr_of($p, self::T_CONSTANT_STRING) && $p["expr"] === "";
-    }
-
-    private static function create2($p, $use_function_instead_operator)
+    private static function create2($p)
     {
         switch ($p["type"]) {
             case self::T_CONSTANT_NULL:
@@ -1202,22 +376,68 @@ class ClickHouseSQLParser
                     $ss[] = self::backquote($part, 0, 1);
                 }
                 return array(self::joinStr($p) . \implode(".", $ss) . self::aliasStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
+            case self::T_PARAMETRIC_FUNCTION:
+                $s = $p["expr"];
+                foreach ($p["sub_tree"] as $k => $sub_tree) {
+                    $s.= self::create2(self::EXP_FUNCTION("",$sub_tree))[0];
+                }
+                return array($s . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_FUNCTION:
                 $func = $p["expr"];
-                if ($use_function_instead_operator || !isset(self::$precedence_map_replace[$func])) {
-                    $s = "";
-                    foreach (@$p["sub_tree"] ? $p["sub_tree"] : array() as $k => $sub) {
-                        if ($k !== 0) {
-                            $s .= ",";
-                        }
-                        list($str) = self::create2($sub, $use_function_instead_operator);
-                        $s .= $str;
-                    }
-                    return array($p["expr"] . "($s)" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
-                }
-                $precedence = self::$precedence_map_replace[$func];
+                $func_upper = \strtoupper($p["expr"]);
+                $sub_tree=@$p["sub_tree"] ? $p["sub_tree"] : array();
                 $s = "";
+                $map=array("COUNT"=>"count");
+                if(isset($map[$func_upper])){
+                    $func=$map[$func_upper];
+                }
                 switch ($func) {
+                    case "count":
+                        if(\count($sub_tree)===0){
+                            $precedence = 100;
+                            $s = "count(*)";
+                            break;
+                        }
+                        goto F1;
+                    case "countDistinct":
+                        $precedence = 100;
+                        foreach ($sub_tree as $k => $sub) {
+                            if ($k !== 0) {
+                                $s .= ",";
+                            }
+                            list($str) = self::create2($sub);
+                            $s .= $str;
+                        }
+                        $s = "count(distinct $s)";
+                        break;
+                    case "toIntervalSecond":
+                    case "toIntervalMinute":
+                    case "toIntervalHour":
+                    case "toIntervalDay":
+                    case "toIntervalWeek":
+                    case "toIntervalMonth":
+                    case "toIntervalQuarter":
+                    case "toIntervalYear":
+                        $precedence = self::$precedence_map["interval"];
+                        list($str, $sub_precedence) = self::create2($sub_tree[0]);
+                        if ($sub_precedence <= $precedence) {
+                            $str = "($str)";
+                        }
+                        $s .= "INTERVAL $str " . self::$interval_map_reverse[$func];
+                        break;
+                    case "toSecond":
+                    case "toMinute":
+                    case "toHour":
+                    case "toDayOfMonth":
+                    case "toMonth":
+                    case "toYear":
+                        $precedence = self::$precedence_map["extract"];
+                        list($str, $sub_precedence) = self::create2($sub_tree[0]);
+                        if ($sub_precedence <= $precedence) {
+                            $str = "($str)";
+                        }
+                        $s .= "EXTRACT(" . self::$extract_map_reverse[$func] . " FROM $str)";
+                        break;
                     case "equals":
                     case "notEquals":
                     case "greater":
@@ -1231,14 +451,15 @@ class ClickHouseSQLParser
                     case "multiply":
                     case "divide":
                     case "modulo":
-                        list($str, $sub_precedence) = self::create2($p["sub_tree"][0], $use_function_instead_operator);
+                        $precedence = self::$precedence_map[$func];
+                        list($str, $sub_precedence) = self::create2($sub_tree[0]);
                         if ($sub_precedence < $precedence) {
                             $s .= "($str)";
                         } else {
                             $s .= "$str";
                         }
-                        $s .= self::$map1[$func];
-                        list($str, $sub_precedence) = self::create2($p["sub_tree"][1], $use_function_instead_operator);
+                        $s .= self::$function_to_operator_map[$func];
+                        list($str, $sub_precedence) = self::create2($sub_tree[1]);
                         if ($sub_precedence <= $precedence) {
                             $s .= "($str)";
                         } else {
@@ -1247,19 +468,20 @@ class ClickHouseSQLParser
                         break;
                     case "in":
                     case "notIn":
-                        $val = $p["sub_tree"][0];
-                        if (self::is_expr_of($val, self::T_FUNCTION) && $val["expr"] === "tuple") {
+                        $precedence = self::$precedence_map[$func];
+                        $val = $sub_tree[0];
+                        if (self::is_expr_of_function($val, "tuple")) {
                             $val["expr"] = "";
                         }
-                        list($str, $sub_precedence) = self::create2($val, $use_function_instead_operator);
+                        list($str, $sub_precedence) = self::create2($val);
                         if ($sub_precedence < $precedence) {
                             $s .= "($str)";
                         } else {
                             $s .= "$str";
                         }
-                        $s .= self::$map1[$func];
-                        $val = $p["sub_tree"][1];
-                        if (!(self::is_expr_of($val, self::T_FUNCTION) && $val["expr"] === "tuple")) {
+                        $s .= self::$function_to_operator_map[$func];
+                        $val = $sub_tree[1];
+                        if (!self::is_expr_of_function($val, "tuple")) {
                             throw new \ErrorException("BUG");
                         }
                         $s .= "(";
@@ -1267,51 +489,41 @@ class ClickHouseSQLParser
                             if ($k !== 0) {
                                 $s .= ",";
                             }
-                            if (self::is_expr_of($sub, self::T_FUNCTION) && $sub["expr"] === "tuple") {
+                            if (self::is_expr_of_function($val, "tuple")) {
                                 $sub["expr"] = "";
                             }
-                            list($str) = self::create2($sub, $use_function_instead_operator);
+                            list($str) = self::create2($sub);
                             $s .= $str;
                         }
                         $s .= ")";
                         break;
                     case "lambda":
-                            $val = $p["sub_tree"][0];
-                            if (self::is_expr_of($val, self::T_FUNCTION) && $val["expr"] === "tuple") {
-                                $val["expr"] = "";
+                        $precedence = self::$precedence_map[$func];
+                        $val = $sub_tree[0];
+                        if (self::is_expr_of_function($val, "tuple")) {
+                            $val["expr"] = "";
+                            if (\count($val["sub_tree"]) === 1) {
+                                $val = $val["sub_tree"][0];
                             }
-                            list($str, $sub_precedence) = self::create2($val, $use_function_instead_operator);
-                            if ($sub_precedence < $precedence) {
-                                $s .= "($str)";
-                            } else {
-                                $s .= "$str";
-                            }
-                            $s .= self::$map1[$func];
-                            $val = $p["sub_tree"][1];
-                            if (!(self::is_expr_of($val, self::T_FUNCTION) && $val["expr"] === "tuple")) {
-                                throw new \ErrorException("BUG");
-                            }
-                            $s .= "(";
-                            foreach ($val["sub_tree"] as $k => $sub) {
-                                if ($k !== 0) {
-                                    $s .= ",";
-                                }
-                                if (self::is_expr_of($sub, self::T_FUNCTION) && $sub["expr"] === "tuple") {
-                                    $sub["expr"] = "";
-                                }
-                                list($str) = self::create2($sub, $use_function_instead_operator);
-                                $s .= $str;
-                            }
-                            $s .= ")";
+                        }
+                        list($str, $sub_precedence) = self::create2($val);
+                        if ($sub_precedence < $precedence) {
+                            $s .= "($str)";
+                        } else {
+                            $s .= "$str";
+                        }
+                        $s .= self::$function_to_operator_map[$func];
+                        $s .= self::create2($sub_tree[1])[0];
                         break;
                     case "or":
                     case "and":
+                        $precedence = self::$precedence_map[$func];
                         $s = "";
                         foreach ($p["sub_tree"] as $k => $sub) {
                             if ($k !== 0) {
-                                $s .= self::$map1[$func];
+                                $s .= self::$function_to_operator_map[$func];
                             }
-                            list($str, $sub_precedence) = self::create2($sub, $use_function_instead_operator);
+                            list($str, $sub_precedence) = self::create2($sub);
                             if ($sub_precedence < $precedence) {
                                 $s .= "($str)";
                             } else {
@@ -1320,21 +532,46 @@ class ClickHouseSQLParser
                         }
                         break;
                     case "negate":
-                        list($str, $sub_precedence) = self::create2($p["sub_tree"][0], $use_function_instead_operator);
-                        if ($sub_precedence <= $precedence) {
+                        $precedence = 100;
+                        list($str, $sub_precedence) = self::create2($sub_tree[0]);
+                        if ($sub_precedence < $precedence) {
                             $s .= "(-($str))";
                         } else {
                             $s .= "(-$str)";
                         }
-                        return array($s . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
+                        break;
+                    case "array":
+                        $precedence = 100;
+                        foreach ($sub_tree as $k => $sub) {
+                            if ($k !== 0) {
+                                $s .= ",";
+                            }
+                            list($str) = self::create2($sub);
+                            $s .= $str;
+                        }
+                        $s = "[$s]";
+                        break;
+                    default:
+F1:                     $precedence = 100;
+                        foreach ($sub_tree as $k => $sub) {
+                            if ($k !== 0) {
+                                $s .= ",";
+                            }
+                            list($str) = self::create2($sub);
+                            $s .= $str;
+                        }
+                        $s = $p["expr"] . "($s)";
                 }
                 if (self::hasAlias($p)) {
-                    $s = "($s)";
+                    if ($precedence < self::$precedence_map["negate"]) {
+                        $s = "($s)";
+                    }
                     $precedence = 0;
                 }
                 return array($s . self::aliasStr($p) . self::orderStr($p), $precedence);
+            case self::T_SUBEXP:
             case self::T_SUBQUERY:
-                return array(self::joinStr($p) . "(" . self::create2($p["sub_tree"], $use_function_instead_operator)[0] . ")" . self::aliasStr($p) . self::orderStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::joinStr($p) . "(" . self::create2($p["sub_tree"])[0] . ")" . self::aliasStr($p) . self::orderStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_SQL_ANY:
                 return array($p["expr"], 0);
             case self::T_SQL_UNION_ALL:
@@ -1343,7 +580,7 @@ class ClickHouseSQLParser
                     if ($k != 0) {
                         $s .= " UNION ALL ";
                     }
-                    $s .= "(" . self::create2($query, $use_function_instead_operator)[0] . ")";
+                    $s .= "(" . self::create2($query)[0] . ")";
                 }
                 return array($s, 100);
             case self::T_SQL_SELECT:
@@ -1354,7 +591,7 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create2($expr, $use_function_instead_operator)[0];
+                        $s .= self::create2($expr)[0];
                     }
                     $s .= " ";
                 }
@@ -1369,29 +606,29 @@ class ClickHouseSQLParser
                     if ($k != 0) {
                         $s .= ",";
                     }
-                    $s .= self::create2($expr, $use_function_instead_operator)[0];
+                    $s .= self::create2($expr)[0];
                 }
                 if (@$p["FROM"]) {
                     $s .= " FROM ";
                     foreach ($p["FROM"] as $k => $expr) {
-                        $s .= self::create2($expr, $use_function_instead_operator)[0];
+                        $s .= self::create2($expr)[0];
                         if ($k == 0 && @$p["ARRAYJOIN"]) {
                             $s .= " ARRAY JOIN ";
                             foreach ($p["ARRAYJOIN"] as $k => $expr2) {
                                 if ($k != 0) {
                                     $s .= ",";
                                 }
-                                $s .= self::create2($expr2, $use_function_instead_operator)[0];
+                                $s .= self::create2($expr2)[0];
                             }
                             $s .= " ";
                         }
                     }
                 }
                 if (@$p["PREWHERE"]) {
-                    $s .= " PREWHERE " . self::create2($p["PREWHERE"], $use_function_instead_operator)[0];
+                    $s .= " PREWHERE " . self::create2($p["PREWHERE"])[0];
                 }
                 if (@$p["WHERE"]) {
-                    $s .= " WHERE " . self::create2($p["WHERE"], $use_function_instead_operator)[0];
+                    $s .= " WHERE " . self::create2($p["WHERE"])[0];
                 }
                 if (@$p["GROUPBY"]) {
                     $s .= " GROUP BY ";
@@ -1399,11 +636,11 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create2($expr, $use_function_instead_operator)[0];
+                        $s .= self::create2($expr)[0];
                     }
                 }
                 if (@$p["HAVING"]) {
-                    $s .= " HAVING " . self::create2($p["HAVING"], $use_function_instead_operator)[0];
+                    $s .= " HAVING " . self::create2($p["HAVING"])[0];
                 }
                 if (@$p["ORDERBY"]) {
                     $s .= " ORDER BY ";
@@ -1411,7 +648,7 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create2($expr, $use_function_instead_operator)[0];
+                        $s .= self::create2($expr)[0];
                     }
                 }
                 if (@$p["LIMITBY"]) {
@@ -1424,7 +661,7 @@ class ClickHouseSQLParser
                         if ($k != 0) {
                             $s .= ",";
                         }
-                        $s .= self::create2($expr, $use_function_instead_operator)[0];
+                        $s .= self::create2($expr)[0];
                     }
                 }
                 if (@$p["LIMIT"]) {
@@ -1442,7 +679,7 @@ class ClickHouseSQLParser
                         if ($k++ != 0) {
                             $s .= ",";
                         }
-                        $s .= "$key=" . self::create2($expr, $use_function_instead_operator)[0];
+                        $s .= "$key=" . self::create2($expr)[0];
                     }
                 }
 
@@ -1457,156 +694,194 @@ class ClickHouseSQLParser
         return self::create2($p, $use_function_instead_operator)[0];
     }
 
-    protected static $precedence_map = array(
-        "or" => 1,
-        "and" => 2,
-        "not" => 3,
-        "equals" => 5,
-        "notEquals" => 5,
-        "greater" => 5,
-        "greaterOrEquals" => 5,
-        "less" => 5,
-        "lessOrEquals" => 5,
-        "like" => 5,
-        "notLike" => 5,
-        "in" => 5,
-        "notIn" => 5,
-        "concat" => 6,
-        "plus" => 7,
-        "minus" => 7,
-        "multiply" => 8,
-        "divide" => 8,
-        "modulo" => 8,
-        "negate" => 9,
-    );
-
-    protected static $precedence_map_replace = array(
-        "lambda" => 0,
-        "or" => 1,
-        "and" => 2,
-        "equals" => 5,
-        "notEquals" => 5,
-        "greater" => 5,
-        "greaterOrEquals" => 5,
-        "less" => 5,
-        "lessOrEquals" => 5,
-        "like" => 5,
-        "notLike" => 5,
-        "in" => 5,
-        "notIn" => 5,
-        "plus" => 7,
-        "minus" => 7,
-        "multiply" => 8,
-        "divide" => 8,
-        "modulo" => 8,
-        "negate" => 9,
-    );
-
-    protected static $map1 = array(
-        "equals" => "=",
-        "notEquals" => "!=",
-        "greater" => ">",
-        "greaterOrEquals" => ">=",
-        "less" => "<",
-        "lessOrEquals" => "<=",
-        "like" => " LIKE ",
-        "notLike" => " NOT LIKE ",
-        "plus" => "+",
-        "minus" => "-",
-        "multiply" => "*",
-        "divide" => "/",
-        "modulo" => "%",
-        "and" => " AND ",
-        "or" => " OR ",
-        "in" => " IN ",
-        "notIn" => " NOT IN ",
-        "lambda" => " -> ",
-    );
 
     protected static function get_next_expr($tokens, $index, $precedence)
     {
-        $m2 = array( //2元操作符
-            "OR" => "or", "AND" => "and",
-            "=" => "equals", "!=" => "notEquals", "<>" => "notEquals", ">" => "greater", ">=" => "greaterOrEquals", "<" => "less", "<=" => "lessOrEquals",
-            "LIKE" => "like",
-            "+" => "plus", "-" => "minus", "*" => "multiply", "%" => "modulo", "/" => "divide", "||" => "concat",
-        );
         $token = @$tokens[$index];
-        if (self::is_token_of($token, "+")) { //忽略
-            if (self::$precedence_map["negate"] <= $precedence) {
-                throw new \ErrorException("unexpect token " . self::token_to_string($token));
-            }
-            list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["negate"]);
-        } elseif (self::is_token_of($token, "-")) {
-            list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["negate"]);
-            if (self::is_expr_of($val1, self::T_CONSTANT_NUMBER) && $val1["expr"][0] !== "-") {
-                if ($val1["expr"] !== "0") {
-                    $val1["expr"] =   "-" . $val1["expr"];
-                }
-            } else {
-                $val1 = self::EXP_FUNCTION("negate", array($val1));
-            }
-        } elseif (self::is_token_of($token, "*")) {
-            $val1 = self::$EXP_IDENTIFIER_ASTERISK;
-            $index++;
-        } elseif (self::is_token_of($token, "(")) {
-            $val1 = self::EXP_IDENTIFIER_COLREF([""]); //然后会出来一个空函数
-        } elseif (self::is_token_of($token, "[")) {
-            $token = @$tokens[++$index];
-            $sub_tree = array();
-            if ($token !== "]") {
-                for (;;) {
-                    list($expr, $index) = self::get_next_expr($tokens, $index, 0);
-                    $sub_tree[] = $expr;
-                    $token = @$tokens[$index];
-                    if ($token === "]") {
-                        $index++;
-                        break;
-                    } elseif ($token === ",") {
-                        $index++;
-                    } else {
-                        throw new \ErrorException("expect ) or , got " . self::token_to_string($token));
+        if (is_string($token)) {
+            switch ($token) {
+                case "+":
+                    if (self::$precedence_map["negate"] <= $precedence) {
+                        throw new \ErrorException("unexpect token " . self::token_to_string($token));
                     }
-                }
-            } else {
-                $index++;
-            }
-            $val1 = self::EXP_FUNCTION("array", $sub_tree);
-        } elseif (self::is_token_of($token, self::T_CONSTANT)) {
-            $val1 = self::token_to_constant_expr($token);
-            $index++;
-        } elseif (self::is_token_of($token, "NOT")) {
-            list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["not"]);
-            $val1 = self::EXP_FUNCTION("not", array($val1));
-        } elseif (self::is_token_of($token, "INTERVAL")) {
-            list($val1, $index) = self::get_next_expr($tokens, $index + 1, 0);
-            $token = @$tokens[$index];
-            if (!(\is_array($token) && isset(self::$interval_map[\strtoupper($token[1])]))) {
-                throw new \ErrorException("expect SECOND MINUTE HOUR DAY WEEK MONTH QUARTER YEAR got " . self::token_to_string($token));
-            }
-            $val1 = self::EXP_FUNCTION(self::$interval_map[\strtoupper($token[1])], array($val1));
-            $index++;
-        } elseif (self::is_token_of($token, "WITH") || self::is_token_of($token, "SELECT")) {
-            list($val1, $index) = self::get_next_select($tokens, $index);
-            $val1 = self::EXP_SUBQUERY($val1);
-        } elseif (self::is_token_of($token, self::T_IDENTIFIER)) { //SELECT/WITH
-            $val1 = self::EXP_IDENTIFIER_COLREF($token[1]);
-            $index++;
-        } else {
-            throw new \ErrorException("unexpect token " . self::token_to_string($token));
-        }
-        for (;;) {
-            if (\count($tokens) <= $index) {
-                return array($val1, $index);
-            }
-            $token = @$tokens[$index];
-            if (!\is_array($token) || self::is_token_of($token, "and") || self::is_token_of($token, "or")) {
-                if ($token === ")" || $token === "," || $token === "]" || $token === "->") {
-                    return array($val1, $index);
-                } elseif ($token == "(") {
+                    list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["negate"]);
+                    break;
+                case "-":
+                    list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["negate"]);
+                    if (self::is_expr_of($val1, self::T_CONSTANT_NUMBER) && $val1["expr"][0] !== "-") {
+                        if ($val1["expr"] !== "0") {
+                            $val1["expr"] =   "-" . $val1["expr"];
+                        }
+                    } else {
+                        $val1 = self::EXP_FUNCTION("negate", array($val1));
+                    }
+                    break;
+                case "*":
+                    $val1 = self::$EXP_IDENTIFIER_ASTERISK;
+                    $index++;
+                    break;
+                case "(":
+                    $val1 = self::EXP_IDENTIFIER_COLREF([""]);
+                    break;
+                case "[":
                     $token = @$tokens[++$index];
                     $sub_tree = array();
+                    if ($token !== "]") {
+                        for (;;) {
+                            list($expr, $index) = self::get_next_expr($tokens, $index, 0);
+                            $sub_tree[] = $expr;
+                            $token = @$tokens[$index];
+                            if ($token === "]") {
+                                $index++;
+                                break;
+                            } elseif ($token === ",") {
+                                $index++;
+                            } else {
+                                throw new \ErrorException("expect ) or , got " . self::token_to_string($token));
+                            }
+                        }
+                    } else {
+                        $index++;
+                    }
+                    $val1 = self::EXP_FUNCTION("array", $sub_tree);
+                    break;
+                default:
+                    throw new \ErrorException("unexpect token " . self::token_to_string($token));
+            }
+        } else {
+            switch ($token[0]) {
+                case self::T_CONSTANT_NULL:
+                case self::T_CONSTANT_LNUMBER:
+                case self::T_CONSTANT_DNUMBER:
+                case self::T_CONSTANT_STRING:
+                    $val1 = self::token_to_constant_expr($token);
+                    $index++;
+                    break;
+                default:
+                    switch (\strtoupper($token[1])) {
+                        case "NOT":
+                            list($val1, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map["not"]);
+                            $val1 = self::EXP_FUNCTION("not", array($val1));
+                            break;
+                        case "INTERVAL":
+                            list($val1, $index) = self::get_next_expr($tokens, $index + 1, 0);
+                            $token = @$tokens[$index];
+                            if (!(\is_array($token) && isset(self::$interval_map[\strtoupper($token[1])]))) {
+                                throw new \ErrorException("expect SECOND, MINUTE, HOUR, DAY, WEEK, MONTH, QUARTER, YEAR got " . self::token_to_string($token));
+                            }
+                            $val1 = self::EXP_FUNCTION(self::$interval_map[\strtoupper($token[1])], array($val1));
+                            $index++;
+                            break;
+                        case "WITH":
+                        case "SELECT":
+                            list($val1, $index) = self::get_next_select($tokens, $index);
+                            $val1 = self::EXP_SUBQUERY($val1);
+                            break;
+                        default:
+                            $val1 = self::EXP_IDENTIFIER_COLREF($token[1]);
+                            $index++;
+                    }
+            }
+        }
+        for (;;) {
+            $token = @$tokens[$index];
+            if ($token === NULL) {
+                return array($val1, $index);
+            }
+            $operator  = \is_string($token) ? $token : \strtoupper($token[1]);
+            $old_index = $index;
+            switch ($operator) {
+                case ")":
+                case ",":
+                case "]":
+                case "->":
+                case ":":
+                    return array($val1, $index);
+                case "?":
+                    $operator = "if";
+                    if (self::$precedence_map[$operator] <= $precedence) {
+                        return array($val1, $old_index);
+                    }
+                    list($val2, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map[$operator]);
+                    $token = @$tokens[$index];
+                    if (!self::is_token_of($token, ":")) {
+                        throw new \ErrorException("expect ':' after '?' got " . self::token_to_string($token));
+                    }
+                    list($val3, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map[$operator]);
+                    $val1 = self::EXP_FUNCTION("if", array($val1, $val2, $val3));
+                    continue 2;
+                case ".":
+                    $token = @$tokens[++$index];
+                    if (self::is_token_of($token, self::T_CONSTANT_LNUMBER)) {
+                        $val1 = self::EXP_FUNCTION("tupleElement", array($val1, self::EXP_CONSTANT_LNUMBER($token[1])));
+                        $index++;
+                        continue 2;
+                    } elseif (self::is_token_of($token, self::T_IDENTIFIER)) {
+                        if (!self::is_expr_of($val1, self::T_IDENTIFIER_COLREF)) {
+                            throw new \ErrorException("BUG");
+                        }
+                        $val1["parts"][] = self::parse_colref($token[1])[0];
+                        $index++;
+                        continue 2;
+                    } else {
+                        throw new \ErrorException("expect IDENTIFIER got " . self::token_to_string($token));
+                    }
+                case "[":
+                    list($expr, $index) = self::get_next_expr($tokens, $index + 1, 0);
+                    $val1 = self::EXP_FUNCTION("arrayElement", array($val1, $expr));
+                    $token = @$tokens[$index];
+                    if ($token !== "]") {
+                        throw new \ErrorException("expect ] got " . self::token_to_string($token));
+                    }
+                    $index++;
+                    continue 2;
+                case "(":
+                    $token = @$tokens[++$index];
+                    $sub_tree = array();
+                    $to_upper_func_name = "";
+                    if (self::is_expr_of($val1, self::T_IDENTIFIER_COLREF)) {
+                        if (\count($val1["parts"]) != 1) {
+                            throw new \ErrorException("expect FUNCTION NAME got " . self::create($val1));
+                        }
+                        $to_upper_func_name = \strtoupper($val1["parts"][0]);
+                    } elseif (self::is_expr_of($val1, self::T_FUNCTION)) {
+                        $val1["type"] = self::T_PARAMETRIC_FUNCTION;
+                        $val1["sub_tree"] = array($val1["sub_tree"]);
+                    } elseif (self::is_expr_of($val1, self::T_PARAMETRIC_FUNCTION)) {
+                    } else {
+                        throw new \ErrorException("expect FUNCTION NAME got " . self::create($val1));
+                    }
+                    //AVG | MAX | MIN | SUM | COUNT
+                    //length | CHAR_LENGTH | CHARACTER_LENGTH
+                    //IF concat
+
                     if ($token !== ")") {
+                        switch ($to_upper_func_name) {
+                            case "COUNT":
+                                if (self::is_token_of($token, "DISTINCT")) {
+                                    $token = @$tokens[++$index];
+                                    $val1["parts"][0] = "countDistinct";
+                                }elseif($token==="*"){
+                                    $token = @$tokens[++$index];
+                                    if ($token !== ")") {
+                                        throw new \ErrorException("expect ')' after 'count(*' got " . self::token_to_string($token));
+                                    }
+                                    goto F4;
+                                }
+                                break;
+                            case "EXTRACT":
+                                $func = @self::$extract_map[\strtoupper(self::token_to_string($token))];
+                                if ($func === NULL) {
+                                    throw new \ErrorException("expect 'SECOND' 'MINUTE' 'HOUR' 'DAY' 'MONTH' 'YEAR' after 'EXTRACT' got " . self::token_to_string($token));
+                                }
+                                $token = @$tokens[++$index];
+                                if (!self::is_token_of($token, "FROM")) {
+                                    throw new \ErrorException("expect 'FROM' after 'EXTRACT ... ' got " . self::token_to_string($token));
+                                }
+                                $token = @$tokens[++$index];
+                                $val1["parts"][0] = $func;
+                                break;
+                        }
                         for (;;) {
                             list($expr, $index) = self::get_next_expr($tokens, $index, 0);
                             $token = @$tokens[$index];
@@ -1640,132 +915,111 @@ class ClickHouseSQLParser
                             }
                         }
                     } else {
-                        $index++;
+F4:                     $index++;
                     }
-                    if (!self::is_expr_of($val1, self::T_IDENTIFIER_COLREF) || \count($val1["parts"]) != 1) {
-                        throw new \ErrorException("expect FUNCTION NAME got " . self::create($val1));
-                    }
-                    if ($val1["parts"][0] === "") {
-                        if (\count($sub_tree) == 0) {
-                            throw new \ErrorException("unexpect token ()");
-                        } elseif (\count($sub_tree) == 1) {
-                            $val1 = $sub_tree[0];
+                    if (self::is_expr_of($val1, self::T_IDENTIFIER_COLREF)) {
+                        if ($val1["parts"][0] === "") {
+                            if (\count($sub_tree) == 0) {
+                                throw new \ErrorException("unexpect token ()");
+                            } elseif (\count($sub_tree) == 1) {
+                                $val1 = $sub_tree[0];
+                            } else {
+                                $val1 = self::EXP_FUNCTION('tuple', $sub_tree);
+                            }
                         } else {
-                            $val1 = self::EXP_FUNCTION('tuple', $sub_tree);
+                            $val1 = self::EXP_FUNCTION($val1["parts"][0], $sub_tree);
                         }
+                    } elseif (self::is_expr_of($val1, self::T_PARAMETRIC_FUNCTION)) {
+                        $val1["sub_tree"][] = $sub_tree;
                     } else {
-                        $val1 = self::EXP_FUNCTION($val1["parts"][0], $sub_tree);
+                        throw new \ErrorException("BUG");
                     }
-                    continue;
-                } elseif ($token == ".") {
+                    continue 2;
+                case "NOT":
                     $token = @$tokens[++$index];
-                    if ($token === NULL) {
-                        throw new \ErrorException("expect IDENTIFIER got EOF");
-                    }
-                    if (self::is_token_of($token, self::T_CONSTANT_LNUMBER)) {
-                        $val1 = self::EXP_FUNCTION("tupleElement", array($val1, self::EXP_CONSTANT_LNUMBER($token[1])));
-                        $index++;
-                        continue;
-                    } elseif (self::is_token_of($token, self::T_IDENTIFIER)) {
-                        if (!self::is_expr_of($val1, self::T_IDENTIFIER_COLREF)) {
-                            throw new \ErrorException("BUG");
+                    if (self::is_token_of($token, "IN")) {
+                        $operator = "notIn";
+                        goto F3;
+                    } elseif (self::is_token_of($token, "LIKE")) {
+                        $operator = "notLike";
+                        goto F2;
+                    } elseif (self::is_token_of($token, "BETWEEN")) { //NOT BETWEEN
+                        $operator = "notBetween";
+                        if (self::$precedence_map[$operator] <= $precedence) {
+                            return array($val1, $old_index);
                         }
-                        $val1["parts"][] = self::parse_colref($token[1])[0];
-                        $index++;
-                        continue;
+                        list($val2, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map[$operator]);
+                        $token = @$tokens[$index];
+                        if (!self::is_token_of($token, "AND")) {
+                            throw new \ErrorException("expect 'AND' after 'BETWEEN ... ' got " . self::token_to_string($token));
+                        }
+                        list($val3, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map[$operator]);
+                        $val1 = self::EXP_FUNCTION("or", array(
+                            self::EXP_FUNCTION("less", array($val1, $val2)),
+                            self::EXP_FUNCTION("greater", array($val1, $val3))
+                        ));
+                        continue 2;
                     } else {
-                        throw new \ErrorException("expect IDENTIFIER got " . self::token_to_string($token));
+                        throw new \ErrorException("expect 'IN' 'LIKE' 'BETWEEN' after 'NOT' got " . self::token_to_string($token));
                     }
-                } elseif ($token == "[") {
-                    list($expr, $index) = self::get_next_expr($tokens, $index + 1, 0);
-                    $val1 = self::EXP_FUNCTION("arrayElement", array($val1, $expr));
-                    $token = @$tokens[$index];
-                    if ($token !== "]") {
-                        throw new \ErrorException("expect ] got " . self::token_to_string($token));
+                case "AND":
+                case "OR":
+                case "LIKE":
+                case "=":
+                case "!=":
+                case "<>":
+                case ">":
+                case ">=":
+                case "<":
+                case "<=":
+                case "+":
+                case "-":
+                case "*":
+                case "/":
+                case "||":
+                    $operator = self::$operator_to_function_map[$operator];
+                    F2: if (self::$precedence_map[$operator] <= $precedence) {
+                        return array($val1, $old_index);
                     }
-                    $index++;
-                    continue;
-                }
-                if (self::is_token_of($token, "and")) {
-                    $token = "AND";
-                } elseif (self::is_token_of($token, "or")) {
-                    $token = "OR";
-                }
-                $operator = @$m2[$token];
-                if ($operator === NULL) {
-                    throw new \ErrorException("operator $token is not supported");
-                }
-                if (self::$precedence_map[$operator] <= $precedence) {
-                    return array($val1, $index);
-                } else {
                     $token = @$tokens[++$index];
                     if ($token === NULL) {
                         throw new \ErrorException("expect (EXPR) got " . self::token_to_string($token));
                     }
                     list($val2, $index) = self::get_next_expr($tokens, $index, self::$precedence_map[$operator]);
                     $val1 = self::EXP_FUNCTION($operator, array($val1, $val2));
-                    continue;
-                }
-            } elseif (self::is_token_of($token, "AS")) {
-                if (0 < $precedence) {
-                    return array($val1, $index);
-                }
-                if (self::is_expr_of($val1, self::T_IDENTIFIER_ASTERISK)) {
-                    throw new \ErrorException("asterisk cannot has alias");
-                }
-                $token = @$tokens[++$index];
-                if (!self::is_token_of($token, self::T_IDENTIFIER)) {
-                    throw new \ErrorException("expect IDENTIFIER got " . self::token_to_string($token));
-                }
-                if (isset($val1["alias"])) {
-                    throw new \ErrorException("already has alias, cannot alias twice " . self::create($val1));
-                }
-                $val1["alias"] = self::parse_colref($token[1])[0];
-                $index++;
-                continue;
-            } elseif (self::is_token_of($token, "IS")) { // is null / is not null
-                $isPrecedence = 5;
-                if ($isPrecedence <= $precedence) {
-                    return array($val1, $index);
-                }
-                $token = @$tokens[++$index];
-                if (self::is_token_of($token, "NULL")) {
-                    $val1 = self::EXP_FUNCTION("isNull", array($val1));
-                    $index++;
-                    continue;
-                } elseif (self::is_token_of($token, "NOT")) {
+                    continue 2;
+                case "IS":
                     $token = @$tokens[++$index];
+                    $not = false;
+                    if (self::is_token_of($token, "NOT")) {
+                        $token = @$tokens[++$index];
+                        $not = true;
+                    }
                     if (self::is_token_of($token, "NULL")) {
-                        $val1 = self::EXP_FUNCTION("isNotNull", array($val1));
                         $index++;
-                        continue;
+                        $operator = $not ? "isNotNull" : "isNull";
+                        if (self::$precedence_map[$operator] <= $precedence) {
+                            return array($val1, $old_index);
+                        }
+                        $val1 = self::EXP_FUNCTION($operator, array($val1));
+                        continue 2;
                     } else {
-                        throw new \ErrorException("expect 'NULL' after 'IS NOT' got " . self::token_to_string($token));
+                        throw new \ErrorException("expect 'NULL' or 'NOT NULL' after 'IS' got " . self::token_to_string($token));
                     }
-                } else {
-                    throw new \ErrorException("expect 'NULL' or 'NOT NULL' after 'IS' got " . self::token_to_string($token));
-                }
-            } elseif (self::is_token_of($token, "NOT") || self::is_token_of($token, "IN") ||  self::is_token_of($token, "BETWEEN") || self::is_token_of($token, "LIKE")) {
-                $old_index = $index;
-                $not = false;
-                if (self::is_token_of($token, "NOT")) {
-                    $not = true;
-                    $token = @$tokens[++$index];
-                    if (!self::is_token_of($token, "IN") && !self::is_token_of($token, "BETWEEN") && !self::is_token_of($token, "LIKE")) {
-                        throw new \ErrorException("expect 'IN' or 'BETWEEN' or 'LIKE' after 'NOT' got " . self::token_to_string($token));
-                    }
-                }
-                if (self::is_token_of($token, "IN")) {
-                    $operator = $not ? "notIn" : "in";
-                    if (self::$precedence_map[$operator] <= $precedence) {
+                case "IN":
+                    $operator = "in";
+                    F3: if (self::$precedence_map[$operator] <= $precedence) {
                         return array($val1, $old_index);
                     }
                     $token = @$tokens[++$index]; //(
+                    if (!self::is_token_of($token, "(")) {
+                        throw new \ErrorException("expect '(' got " . self::token_to_string($token));
+                    }
                     $token = @$tokens[++$index];
-                    $sub_tree = array();
                     if ($token === ")") {
                         throw new \ErrorException("in-list cannot be empty");
                     }
+                    $sub_tree = array();
                     for (;;) {
                         list($expr, $index) = self::get_next_expr($tokens, $index, 0);
                         $sub_tree[] = $expr;
@@ -1780,24 +1034,10 @@ class ClickHouseSQLParser
                         }
                     }
                     $val1 = self::EXP_FUNCTION($operator, array($val1, self::EXP_FUNCTION("tuple", $sub_tree)));
-                } elseif (!$not && self::is_token_of($token, "LIKE")) {
-                    $operator = "like";
+                    continue 2;
+                case "BETWEEN":
+                    $operator = "between";
                     if (self::$precedence_map[$operator] <= $precedence) {
-                        return array($val1, $old_index);
-                    }
-                    list($val2, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map[$operator]);
-                    $val1 = self::EXP_FUNCTION("like", array($val1, $val2));
-                    continue;
-                } elseif ($not && self::is_token_of($token, "LIKE")) {
-                    $operator = "notLike";
-                    if (self::$precedence_map[$operator] <= $precedence) {
-                        return array($val1, $old_index);
-                    }
-                    list($val2, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map[$operator]);
-                    $val1 = self::EXP_FUNCTION("notLike", array($val1, $val2));
-                } elseif (!$not && self::is_token_of($token, "BETWEEN")) {
-                    $betweenPrecedence = 4;
-                    if ($betweenPrecedence <= $precedence) {
                         return array($val1, $old_index);
                     }
                     list($val2, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map[$operator]);
@@ -1810,86 +1050,61 @@ class ClickHouseSQLParser
                         self::EXP_FUNCTION("greaterOrEquals", array($val1, $val2)),
                         self::EXP_FUNCTION("lessOrEquals", array($val1, $val3))
                     ));
-                    continue;
-                } elseif ($not && self::is_token_of($token, "BETWEEN")) {
-                    $notBetweenPrecedence = 4;
-                    if ($notBetweenPrecedence <= $precedence) {
+                    continue 2;
+                case "AS":
+                    $operator = "as";
+                    if (self::$precedence_map[$operator] <= $precedence) {
                         return array($val1, $old_index);
                     }
-                    list($val2, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map[$operator]);
-                    $token = @$tokens[$index];
-                    if (!self::is_token_of($token, "AND")) {
-                        throw new \ErrorException("expect 'AND' after 'BETWEEN ... ' got " . self::token_to_string($token));
+                    if (self::is_expr_of($val1, self::T_IDENTIFIER_ASTERISK)) {
+                        throw new \ErrorException("asterisk cannot has alias");
                     }
-                    list($val3, $index) = self::get_next_expr($tokens, $index + 1, self::$precedence_map[$operator]);
-                    $val1 = self::EXP_FUNCTION("or", array(
-                        self::EXP_FUNCTION("less", array($val1, $val2)),
-                        self::EXP_FUNCTION("greater", array($val1, $val3))
-                    ));
-                    continue;
-                } else {
-                    throw new \ErrorException("BUG");
-                }
-            } elseif (self::is_expr_of($val1, self::T_SUBQUERY) && self::is_token_of($token, "UNION")) {
-                $token = @$tokens[++$index];
-                if (!self::is_token_of($token, "ALL")) {
-                    throw new \ErrorException("expect 'ALL' after 'UNION' got " . self::token_to_string($token));
-                }
-                list($val2, $index) = self::get_next_expr($tokens, $index + 1, 0);
-                if (!self::is_expr_of($val2, self::T_SUBQUERY)) {
-                    throw new \ErrorException("expect 'UNION ALL' must in SUBQUERY");
-                }
-                $query = $val1["sub_tree"];
-                if ($query["type"] == self::T_SQL_SELECT) {
-                    $query = self::SQL_UNION_ALL([$query]);
-                }
-                $query2 = $val2["sub_tree"];
-                if ($query2["type"] == self::T_SQL_SELECT) {
-                    $query2 = self::SQL_UNION_ALL([$query2]);
-                }
-                foreach ($query2["sub_tree"] as $q) {
-                    $query["sub_tree"][] = $q;
-                }
-                $val1["sub_tree"] = $query;
-                continue;
-            } else {
-                return array($val1, $index);
+                    $token = @$tokens[++$index];
+                    if (!self::is_token_of($token, self::T_IDENTIFIER)) {
+                        throw new \ErrorException("expect IDENTIFIER got " . self::token_to_string($token));
+                    }
+                    if (isset($val1["alias"])) {
+                        $val1 = self::EXP_SUBEXP($val1);
+                    }
+                    $val1["alias"] = self::parse_colref($token[1])[0];
+                    $index++;
+                    continue 2;
+                case "UNION":
+                    $token = @$tokens[++$index];
+                    if (!self::is_token_of($token, "ALL")) {
+                        throw new \ErrorException("expect 'ALL' after 'UNION' got " . self::token_to_string($token));
+                    }
+                    if (!self::is_expr_of($val1, self::T_SUBQUERY)) {
+                        throw new \ErrorException("expect (QUERY) before 'UNION ALL' ");
+                    }
+                    list($val2, $index) = self::get_next_expr($tokens, $index + 1, 0);
+                    if (!self::is_expr_of($val2, self::T_SUBQUERY)) {
+                        throw new \ErrorException("expect (QUERY) after 'UNION ALL' ");
+                    }
+                    $query = $val1["sub_tree"];
+                    if ($query["type"] == self::T_SQL_SELECT) {
+                        $query = self::SQL_UNION_ALL([$query]);
+                    }
+                    $query2 = $val2["sub_tree"];
+                    if ($query2["type"] == self::T_SQL_SELECT) {
+                        $query2 = self::SQL_UNION_ALL([$query2]);
+                    }
+                    foreach ($query2["sub_tree"] as $q) {
+                        $query["sub_tree"][] = $q;
+                    }
+                    $val1["sub_tree"] = $query;
+                    continue 2;
+                default:
+                    if (\is_string($token)) {
+                        throw new \ErrorException("unexpect token " . self::token_to_string($token));
+                    }
+                    return array($val1, $index);
             }
         }
         throw new \ErrorException("BUG");
     }
 
-    protected static $interval_map = array(
-        "SECOND" => "toIntervalSecond",
-        "MINUTE" => "toIntervalMinute",
-        "HOUR" => "toIntervalHour",
-        "DAY" => "toIntervalDay",
-        "WEEK" => "toIntervalWeek",
-        "MONTH" => "toIntervalMonth",
-        "QUARTER" => "toIntervalQuarter",
-        "YEAR" => "toIntervalYear",
-    );
 
-    protected static $keywords_map = array(
-        "WITH" => 1,
-        "SELECT" => 1,
-        "FROM" => 1,
-        "FINAL" => 1,
-        "HAVING" => 1,
-        "WHERE" => 1,
-        "PREWHERE" => 1,
-        "ORDER" => 1,
-        "LIMIT" => 1,
-        "CROSS" => 1,
-        "INNER" => 1,
-        "LEFT" => 1,
-        "RIGHT" => 1,
-        "FULL" => 1,
-        "JOIN" => 1,
-        "ON" => 1,
-        "USING" => 1,
-        "ARRAY" => 1,
-    );
 
     protected static function is_token_keyword($token)
     {
@@ -1936,7 +1151,7 @@ class ClickHouseSQLParser
                     throw new \ErrorException("asterisk cannot has alias");
                 }
                 if (isset($expr["alias"])) {
-                    throw new \ErrorException("already has alias, cannot alias twice " . self::create($expr));
+                    $expr = self::EXP_SUBEXP($expr);
                 }
                 $expr["alias"] = self::parse_colref($token[1])[0];
                 $index++;
@@ -2029,7 +1244,7 @@ class ClickHouseSQLParser
                         throw new \ErrorException("asterisk cannot has alias");
                     }
                     if (isset($expr["alias"])) {
-                        throw new \ErrorException("already has alias, cannot alias twice " . self::create($expr));
+                        $expr = self::EXP_SUBEXP($expr);
                     }
                     $expr["alias"] = self::parse_colref($token[1])[0];
                     $index++;
@@ -2219,6 +1434,6 @@ class ClickHouseSQLParser
     }
 }
 
-$p=ClickHouseSQLParser::parse("select (a,b) IN (1,2) from abc");
+$p = ClickHouseSQLParser::parse_expr("select 1 in (select 1)");
 ClickHouseSQLParser::dump_expr($p);
 echo ClickHouseSQLParser::create($p);
