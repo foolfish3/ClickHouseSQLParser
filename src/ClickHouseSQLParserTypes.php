@@ -155,10 +155,15 @@ class ClickHouseSQLParserTypes
         return self::is_type_of($expr["type"], self::T_FUNCTION) && $expr["expr"] === $func;
     }
 
-    public static $EXP_CONSTANT_NULL = array(
+    protected static $EXP_CONSTANT_NULL = array(
         "type" => self::T_CONSTANT_NULL,
         "expr" => "",
     );
+
+    public static function EXP_CONSTANT_NULL()
+    {
+        return self::$EXP_CONSTANT_NULL;
+    }
 
     public static function EXP_CONSTANT_LNUMBER($num)
     {
@@ -193,26 +198,45 @@ class ClickHouseSQLParserTypes
         );
     }
 
-    public static $EXP_CONSTANT_0 = array(
+    protected static $EXP_CONSTANT_0 = array(
         "type" => self::T_CONSTANT_LNUMBER,
         "expr" => "0",
     );
 
+    public static function EXP_CONSTANT_0()
+    {
+        return self::$EXP_CONSTANT_0;
+    }
 
-    public static $EXP_CONSTANT_1 = array(
+    protected static $EXP_CONSTANT_1 = array(
         "type" => self::T_CONSTANT_LNUMBER,
         "expr" => "1",
     );
 
-    public static $EXP_CONSTANT_EMPTY_STRING = array(
+    public static function EXP_CONSTANT_1()
+    {
+        return self::$EXP_CONSTANT_1;
+    }
+
+    protected static $EXP_CONSTANT_EMPTY_STRING = array(
         "type" => self::T_CONSTANT_STRING,
         "expr" => "",
     );
+
+    public static function EXP_CONSTANT_EMPTY_STRING()
+    {
+        return self::$EXP_CONSTANT_EMPTY_STRING;
+    }
 
     public static $EXP_IDENTIFIER_ASTERISK = array(
         "type" => self::T_IDENTIFIER_ASTERISK,
         "expr" => "",
     );
+
+    public static function EXP_IDENTIFIER_ASTERISK()
+    {
+        return self::$EXP_IDENTIFIER_ASTERISK;
+    }
 
     public static function EXP_IDENTIFIER_COLREF($parts)
     {
@@ -338,10 +362,10 @@ class ClickHouseSQLParserTypes
         return $s;
     }
 
-    public static function dump_tokens($tokens, $return = false)
+    public static function dump_tokens($tokens, $offset = 0, $return = false)
     {
         $s = "";
-        foreach ($tokens as $k => &$token) {
+        foreach (\array_slice($tokens, $offset) as $k => &$token) {
             if (\is_array($token)) {
                 $s .= "$k: (" . self::type_name($token[0]) . ") " . \var_export($token[1], true) . "\n";
             } else {

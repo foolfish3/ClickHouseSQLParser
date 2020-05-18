@@ -2,9 +2,10 @@
 
 namespace ClickHouseSQLParser;
 
-require_once __DIR__."/ClickHouseSQLParserTypes.php";
+require_once __DIR__ . "/ClickHouseSQLParserTypes.php";
 
-class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes{
+class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes
+{
     protected function __construct()
     {
     }
@@ -184,7 +185,7 @@ class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes{
         return array(array(self::T_WHITESPACE, $s), $index);
     }
 
-    protected static function get_next_token($str, $index)
+    protected static function get_next_token($str, $index, $dont_allow_comment)
     {
         static $map = array(
             "`" => 1, "'" => 1, "\"" => 1,
@@ -201,7 +202,11 @@ class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes{
                 list($token, $index) = self::get_next_quote($str, $index);
                 break;
             case 2:
-                list($token, $index) = self::get_next_comment($str, $index);
+                if (!$dont_allow_comment) {
+                    list($token, $index) = self::get_next_comment($str, $index);
+                } else {
+                    $token = false;
+                }
                 break;
             case 4:
                 list($token, $index) = self::get_next_number($str, $index);
@@ -223,7 +228,7 @@ class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes{
                 if (($r = self::get_next_splitter("", $str, $index, self::get_splitters_map()))) {
                     return $r;
                 } else {
-                    return array(array(self::T_INVALID_CHAR,$c),$index+1);
+                    return array(array(self::T_INVALID_CHAR, $c), $index + 1);
                     //throw new \ErrorException("unkown char $c (" . ord($c) . ")");
                 }
             }
@@ -423,6 +428,16 @@ class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes{
         return array(array($is_float ? self::T_CONSTANT_DNUMBER : self::T_CONSTANT_LNUMBER, $s), $index);
     }
 
+    protected static function tokens_post_process($tokens, $options = array())
+    {
+        if (@$options["tokens_post_process_check_error_and_remove_blank"]) {
+            $tokens = self::post_process_check_error($tokens);
+            $tokens = self::post_process_remove_blank($tokens);
+        } elseif (@$options["tokens_post_process_check_error"]) {
+            $tokens = self::post_process_check_error($tokens);
+        }
+        return $tokens;
+    }
 
     protected static function post_process_check_error($tokens)
     {
@@ -434,7 +449,7 @@ class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes{
                 } else {
                     $last_token = $token;
                 }
-            } elseif(self::is_token_of($token,self::T_INVALID_CHAR)){
+            } elseif (self::is_token_of($token, self::T_INVALID_CHAR)) {
                 throw new \ErrorException("unkown char {$token[1]} (Dec:" . ord($token[1]) . ")");
             } else {
                 $last_token = NULL;
@@ -454,26 +469,26 @@ class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes{
         return $new_tokens;
     }
 
-    public static function token_get_all($str,$check_error_and_remove_blank=false)
+    //tokens_post_process_check_error_and_remove_blank => default(0)
+    //tokens_post_process_check_error  => default(0)
+    //tokens_dont_allow_comment => default(0)
+    public static function token_get_all($str, $options = array())
     {
         if ($str === "") {
             return array();
         }
         $tokens = array();
         $index = 0;
+        $dont_allow_comment = @$options["tokens_dont_allow_comment"] ? true : false;
         for (;;) {
-            list($token, $index) = self::get_next_token($str, $index);
+            list($token, $index) = self::get_next_token($str, $index, $dont_allow_comment);
             if ($token === false) {
                 break;
             } else {
                 $tokens[] = $token;
             }
         }
-        if($check_error_and_remove_blank){
-            $tokens=self::post_process_check_error($tokens);
-            $tokens=self::post_process_remove_blank($tokens);
-        }
+        $tokens = self::tokens_post_process($tokens, $options);
         return $tokens;
     }
-
 }
