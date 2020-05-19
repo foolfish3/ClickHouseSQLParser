@@ -638,6 +638,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         }
                     }
                 }
+                if (@$p["HAS_SEMICOLON"]) {
+                    $s .= ";";
+                }
                 //union all didn't has it's settings
                 return array($s, 100);
             case self::T_SQL_SELECT:
@@ -757,8 +760,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         }
                     }
                 }
-
-
+                if (@$p["HAS_SEMICOLON"]) {
+                    $s .= ";";
+                }
                 return array($s, 0);
             default:
                 throw new \ErrorException("BUG");
@@ -869,7 +873,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 return array($val1, $index);
             }
             $operator  = \is_string($token) ? $token : \strtoupper($token[1]);
-            if ($is_sql && !isset([")" => 1, "UNION" => 1, "FORMAT" => 1][$operator])) {
+            if ($is_sql && !isset([")" => 1,";"=>1,"UNION" => 1, "FORMAT" => 1][$operator])) {
                 throw new \ErrorException("unexpect token " . self::token_to_string($token));
             }
             $old_index = $index;
@@ -975,6 +979,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                             if ($sub_allow_sql && self::is_expr_of($expr, self::T_SQL_ALLOW_IN_SUBQUERY)) {
                                 if ($token !== ")") {
                                     throw new \ErrorException("sql must in parentheses");
+                                }
+                                if(@$expr["HAS_SEMICOLON"]){
+                                    throw new \ErrorException("sql must not has semicolon");
                                 }
                                 $val1 = self::EXP_SUBQUERY($expr);
                                 $index++;
@@ -1189,6 +1196,25 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     $val1["alias"] = self::parse_colref($token[1])[0];
                     $index++;
                     continue 2;
+                case ";":
+                    if (!$allow_sql) {
+                        return array($val1, $index);
+                    }
+                    $unionPrecedence = 1;
+                    if ($unionPrecedence <= $precedence) {
+                        return array($val1, $old_index);
+                    }
+                    if (self::is_expr_of($val1, self::T_SUBQUERY)) {
+                        if (self::hasAlias($val1)) {
+                            throw new \ErrorException("the (QUERY) used in UNION ALL cannot has alias");
+                        }
+                        $val1 = $val1["sub_tree"];
+                    }
+                    for(;self::is_token_of($token, ";");$token = @$tokens[++$index]){
+                    }
+                    $val1["HAS_SEMICOLON"]=1;
+                    $is_sql = true;
+                    continue 2;
                 case "FORMAT":
                     if (!$allow_sql) {
                         return array($val1, $index);
@@ -1207,11 +1233,11 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         }
                         $val1 = $val1["sub_tree"];
                     }
+                    if (isset($val1["HAS_SEMICOLON"])) {
+                        throw new \ErrorException("the query already has semicolon");
+                    }
                     if (isset($val1["FORMAT"])) {
                         throw new \ErrorException("the query already has format");
-                    }
-                    if (isset($val1["SETTINGS"])) {
-                        throw new \ErrorException("the query already has settings");
                     }
                     $val1["FORMAT"] = $token[1];
                     $token = @$tokens[++$index];
@@ -1259,10 +1285,13 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         if (self::hasAlias($val1)) {
                             throw new \ErrorException("the (QUERY) used in UNION ALL cannot has alias");
                         }
-                        if (isset($val1["FORMAT"])) {
-                            throw new \ErrorException("the (QUERY) used in UNION ALL cannot has format");
-                        }
                         $val1 = $val1["sub_tree"];
+                    }
+                    if (isset($val1["FORMAT"])) {
+                        throw new \ErrorException("the (QUERY) used in UNION ALL cannot has format");
+                    }
+                    if (isset($val1["HAS_SEMICOLON"])) {
+                        throw new \ErrorException("the (QUERY) used in UNION ALL cannot has semicolon");
                     }
                     if (self::is_expr_of($val1, self::T_SQL_SELECT)) {
                         $val1 = self::SQL_UNION_ALL([$val1]);
@@ -1275,10 +1304,13 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         if (self::hasAlias($val2)) {
                             throw new \ErrorException("the (QUERY) used in UNION ALL cannot has alias");
                         }
-                        if (isset($val2["FORMAT"])) {
-                            throw new \ErrorException("the (QUERY) used in UNION ALL cannot has format");
-                        }
                         $val2 = $val1["sub_tree"];
+                    }
+                    if (isset($val2["FORMAT"])) {
+                        throw new \ErrorException("the (QUERY) used in UNION ALL cannot has format");
+                    }
+                    if (isset($val2["HAS_SEMICOLON"])) {
+                        throw new \ErrorException("the (QUERY) used in UNION ALL cannot has semicolon");
                     }
                     if (self::is_expr_of($val2, self::T_SQL_SELECT)) {
                         $val2 = self::SQL_UNION_ALL([$val2]);
@@ -1657,8 +1689,3 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         return array($obj, $index);
     }
 }
-/*
-$p = ClickHouseSQLParser::parse("select Count(*) from a b final format csv settings a='1',b=2");
-ClickHouseSQLParser::dump_expr($p);
-echo ClickHouseSQLParser::create($p);
-*/
