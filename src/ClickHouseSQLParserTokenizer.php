@@ -2,8 +2,6 @@
 
 namespace ClickHouseSQLParser;
 
-require_once __DIR__ . "/ClickHouseSQLParserTypes.php";
-
 class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes
 {
     protected function __construct()
@@ -479,7 +477,7 @@ class ClickHouseSQLParserTokenizer extends ClickHouseSQLParserTypes
         }
         $tokens = array();
         $index = 0;
-        $dont_allow_comment = @$options["tokens_dont_allow_comment"] ? true : false;
+        $dont_allow_comment = (bool) @$options["tokens_dont_allow_comment"];
         for (;;) {
             list($token, $index) = self::get_next_token($str, $index, $dont_allow_comment);
             if ($token === false) {

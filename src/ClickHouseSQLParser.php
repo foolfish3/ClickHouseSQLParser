@@ -2,8 +2,6 @@
 
 namespace ClickHouseSQLParser;
 
-require_once __DIR__ . "/ClickHouseSQLParserTokenizer.php";
-
 class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
 {
     protected static $precedence_map = array(
@@ -156,6 +154,17 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
     protected static function internal_expr_post_process(&$expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map)
     {
         switch ($expr["type"]) {
+            case self::T_PARAMETRIC_FUNCTION:
+                foreach ($expr["sub_tree"] as &$sub_tree) {
+                    foreach ($sub_tree as &$sub_expr) {
+                        self::internal_expr_post_process($sub_expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
+                    }
+                }
+                $upper = \strtoupper($expr["expr"]);
+                if (isset($case_insensitive_function_name_map[$upper])) {
+                    $expr["expr"] = $case_insensitive_function_name_map[$upper];
+                }
+                break;
             case self::T_FUNCTION:
                 foreach ($expr["sub_tree"] as &$sub_expr) {
                     self::internal_expr_post_process($sub_expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
@@ -313,6 +322,10 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         }
     }
 
+    //expr_post_process_compact_and => default(1)
+    //expr_post_process_compact_or => default(1)
+    //expr_post_process_compact_concat => default(1)
+    //expr_post_process_change_case_insensitive_function_name => default(1)
     public static function parse_expr($str, $options = array())
     {
         $options["tokens_post_process_check_error_and_remove_blank"] = 1;
@@ -416,7 +429,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 return array(self::joinStr($p) . \implode(".", $ss) . self::aliasStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_PARAMETRIC_FUNCTION:
                 $s = $p["expr"];
-                foreach ($p["sub_tree"] as $k => $sub_tree) {
+                foreach ($p["sub_tree"] as $sub_tree) {
                     $s .= self::create2(self::EXP_FUNCTION("", $sub_tree))[0];
                 }
                 return array($s . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
@@ -625,6 +638,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         }
                     }
                 }
+                //union all didn't has it's settings
                 return array($s, 100);
             case self::T_SQL_SELECT:
                 $s = "";
@@ -855,7 +869,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 return array($val1, $index);
             }
             $operator  = \is_string($token) ? $token : \strtoupper($token[1]);
-            if ($is_sql && !isset([")" => 1, "UNION" => 1, "FORMAT" => 1, "SETTINGS" => 1][$operator])) {
+            if ($is_sql && !isset([")" => 1, "UNION" => 1, "FORMAT" => 1][$operator])) {
                 throw new \ErrorException("unexpect token " . self::token_to_string($token));
             }
             $old_index = $index;
@@ -1201,7 +1215,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     }
                     $val1["FORMAT"] = $token[1];
                     $token = @$tokens[++$index];
-                    if(self::is_token_of($token,"SETTINGS")){
+                    if (self::is_token_of($token, "SETTINGS")) {
                         $val1["FORMAT_SETTINGS"] = array();
                         $index++;
                         for (;;) {
@@ -1643,7 +1657,8 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         return array($obj, $index);
     }
 }
-
+/*
 $p = ClickHouseSQLParser::parse("select Count(*) from a b final format csv settings a='1',b=2");
 ClickHouseSQLParser::dump_expr($p);
 echo ClickHouseSQLParser::create($p);
+*/
