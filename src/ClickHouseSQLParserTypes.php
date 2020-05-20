@@ -6,34 +6,34 @@ class ClickHouseSQLParserTypes
 {
     const T_BLANK = 1000;
     const T_COMMENT = 1010;
-    const T_COMMENT_SINGLE_LINE = 1011;//TOKENS
-    const T_COMMENT_MULTI_LINE = 1012;//TOKENS
-    const T_WHITESPACE = 1100;//TOKENS
+    const T_COMMENT_SINGLE_LINE = 1011; //TOKENS
+    const T_COMMENT_MULTI_LINE = 1012; //TOKENS
+    const T_WHITESPACE = 1100; //TOKENS
     const T_CONSTANT = 2100;
-    const T_CONSTANT_NULL = 2110;//EXP
+    const T_CONSTANT_NULL = 2110; //EXP
     const T_CONSTANT_NUMBER = 2120;
-    const T_CONSTANT_LNUMBER = 2121;//EXP //TOKENS
-    const T_CONSTANT_DNUMBER = 2122;//EXP //TOKENS
-    const T_CONSTANT_STRING  = 2131;//EXP //TOKENS
+    const T_CONSTANT_LNUMBER = 2121; //EXP //TOKENS
+    const T_CONSTANT_DNUMBER = 2122; //EXP //TOKENS
+    const T_CONSTANT_STRING  = 2131; //EXP //TOKENS
     const T_IDENTIFIER = 3100;
-    const T_IDENTIFIER_ASTERISK = 3150;//EXP
-    const T_IDENTIFIER_TABLE = 3140;//EXP
-    const T_IDENTIFIER_COLREF = 3130;//EXP
-    const T_IDENTIFIER_NOQUOTE = 3110;//TOKENS
+    const T_IDENTIFIER_ASTERISK = 3150; //EXP
+    const T_IDENTIFIER_TABLE = 3140; //EXP
+    const T_IDENTIFIER_COLREF = 3130; //EXP
+    const T_IDENTIFIER_NOQUOTE = 3110; //TOKENS
     const T_IDENTIFIER_QUOTE = 3120;
-    const T_IDENTIFIER_BACKQUOTE = 3121;//TOKENS
-    const T_IDENTIFIER_DOUBLEQUOTE = 3122;//TOKENS
-    const T_INVALID_CHAR = 4000;//TOKENS
-    const T_EXP_ANY = 5000;//EXP
-    const T_FUNCTION = 6100;//EXP
-    const T_PARAMETRIC_FUNCTION = 6200;//EXP
-    const T_SUBQUERY = 7100;//EXP
-    const T_SUBEXP   = 7200;//EXP
+    const T_IDENTIFIER_BACKQUOTE = 3121; //TOKENS
+    const T_IDENTIFIER_DOUBLEQUOTE = 3122; //TOKENS
+    const T_INVALID_CHAR = 4000; //TOKENS
+    const T_EXP_ANY = 5000; //EXP
+    const T_FUNCTION = 6100; //EXP
+    const T_PARAMETRIC_FUNCTION = 6200; //EXP
+    const T_SUBQUERY = 7100; //EXP
+    const T_SUBEXP   = 7200; //EXP
     const T_SQL = 9000;
     const T_SQL_ALLOW_IN_SUBQUERY     = 9100; //allowed in subquery
-    const T_SQL_SELECT    = 9101;//EXP
-    const T_SQL_UNION_ALL = 9102;//EXP
-    const T_SQL_ANY       = 9999;//EXP
+    const T_SQL_SELECT    = 9101; //EXP
+    const T_SQL_UNION_ALL = 9102; //EXP
+    const T_SQL_ANY       = 9999; //EXP
 
     protected static $type_child_map = array(
         self::T_BLANK => array(
@@ -152,7 +152,11 @@ class ClickHouseSQLParserTypes
 
     public static function is_expr_of_function($expr, $func)
     {
-        return self::is_type_of($expr["type"], self::T_FUNCTION) && $expr["expr"] === $func;
+        if (\is_array($func)) {
+            return self::is_type_of($expr["type"], self::T_FUNCTION) && isset($func[$expr["expr"]]);
+        } else {
+            return self::is_type_of($expr["type"], self::T_FUNCTION) && $expr["expr"] === $func;
+        }
     }
 
     protected static $EXP_CONSTANT_NULL = array(
@@ -187,6 +191,18 @@ class ClickHouseSQLParserTypes
             "type" => self::T_CONSTANT_STRING,
             "expr" => \strval($str),
         );
+    }
+
+    public static function getConstantValue($expr)
+    {
+        if (!self::is_expr_of($expr, self::T_CONSTANT)) {
+            throw new \ErrorException("not a T_CONSTANT");
+        }
+        if (self::is_expr_of($expr, self::T_CONSTANT_NULL)) {
+            return NULL;
+        } else {
+            return $expr["expr"];
+        }
     }
 
     public static function EXP_SUBEXP($expr)
@@ -251,6 +267,31 @@ class ClickHouseSQLParserTypes
             "expr" => "",
             "parts" => $parts,
         );
+    }
+
+    public static function get_identifier_backquote_name($expr)
+    {
+        if (!self::is_expr_of($expr, self::T_IDENTIFIER)) {
+            throw new \ErrorException("not a T_IDENTIFIER");
+        }
+        if (self::is_expr_of($expr, self::T_IDENTIFIER_ASTERISK)) {
+            return "*";
+        }
+        return self::backquote($expr["parts"]);
+    }
+
+    public static function get_one_part_identifier_name($expr)
+    {
+        if (!self::is_expr_of($expr, self::T_IDENTIFIER)) {
+            throw new \ErrorException("not a T_IDENTIFIER");
+        }
+        if (self::is_expr_of($expr, self::T_IDENTIFIER_ASTERISK)) {
+            return "*";
+        }
+        if (\count($expr["parts"]) > 1) {
+            return false;
+        }
+        return $expr["parts"][0];
     }
 
     public static function EXP_IDENTIFIER_TABLE($parts)
@@ -352,16 +393,6 @@ class ClickHouseSQLParserTypes
         }
     }
 
-    public static function dump_expr($expr, $return = false)
-    {
-        self::convert_expr_name($expr);
-        $s = json_encode($expr, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-        if (!$return) {
-            echo $s;
-        }
-        return $s;
-    }
-
     public static function dump_tokens($tokens, $offset = 0, $return = false)
     {
         $s = "";
@@ -388,62 +419,6 @@ class ClickHouseSQLParserTypes
         return \implode($tokens);
     }
 
-    protected static function convert_expr_name(&$expr)
-    {
-        switch ($expr["type"]) {
-            case self::T_FUNCTION:
-            case self::T_SQL_UNION_ALL:
-                foreach (["SETTINGS"] as $key) {
-                    if (isset($expr[$key])) {
-                        foreach ($expr[$key] as &$sub_expr) {
-                            self::convert_expr_name($sub_expr);
-                        }
-                    }
-                }
-                foreach ($expr["sub_tree"] as &$sub_expr) {
-                    self::convert_expr_name($sub_expr);
-                }
-                break;
-            case self::T_PARAMETRIC_FUNCTION:
-                foreach ($expr["sub_tree"] as &$a) {
-                    foreach ($a as &$sub_expr) {
-                        self::convert_expr_name($sub_expr);
-                    }
-                }
-                break;
-            case self::T_SUBEXP:
-            case self::T_SUBQUERY:
-                self::convert_expr_name($expr["sub_tree"]);
-                break;
-            case self::T_SQL_SELECT:
-                foreach (["WITH", "SELECT", "FROM", "ARRAYJOIN", "GROUPBY", "ORDERBY", "SETTINGS"] as $key) {
-                    if (isset($expr[$key])) {
-                        foreach ($expr[$key] as &$sub_expr) {
-                            self::convert_expr_name($sub_expr);
-                        }
-                    }
-                }
-                foreach (["PREWHERE", "WHERE", "HAVING"] as $key) {
-                    if (isset($expr[$key])) {
-                        self::convert_expr_name($expr[$key]);
-                    }
-                }
-                break;
-        }
-        foreach (["using"] as $key) {
-            if (isset($expr[$key])) {
-                foreach ($expr[$key] as &$sub_expr) {
-                    self::convert_expr_name($sub_expr);
-                }
-            }
-        }
-        foreach (["on"] as $key) {
-            if (isset($expr[$key])) {
-                self::convert_expr_name($expr[$key]);
-            }
-        }
-        $expr["type"] = self::type_name($expr["type"]);
-    }
 
     public static function parse_colref($str)
     {
@@ -493,7 +468,7 @@ class ClickHouseSQLParserTypes
                     if ($s === "") {
                         throw new \ErrorException("cannot parse $str");
                     }
-                    $ss[] = $s;
+                    $ss[] = ($s === "*" && !$quote) ? "" : $s;
                     $s = "";
                     $quote = NULL;
                     $c = @$str[++$index];
@@ -505,7 +480,7 @@ class ClickHouseSQLParserTypes
                     if ($s === "") {
                         throw new \ErrorException("cannot parse $str");
                     }
-                    $ss[] = $s;
+                    $ss[] = ($s === "*" && !$quote) ? "" : $s;
                     return $ss;
                 default:
                     if ($quote !== NULL) {
@@ -523,9 +498,9 @@ class ClickHouseSQLParserTypes
         if (\is_array($str)) {
             $ss = array();
             foreach ($str as $s) {
-                $ss[] = self::backquote($s);
+                $ss[] = $s === "" ? "*" : self::backquote($s);
             }
-            return \implode(",", $ss);
+            return \implode(".", $ss);
         }
         return "`" . \strtr($str, array("\000" => "\\0", "\n" => "\\n", "\r" => "\\r", "\\" => "\\\\", "'" => "\\'", "\"" => "\\\"", "`" => "\`")) . "`";
     }

@@ -131,156 +131,63 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         return $replace_expr;
     }
 
-    public static function expr_post_process($expr, $options = array())
+    public static function dump_expr($expr, $return = false)
     {
-        $compact_and = isset($options["expr_post_process_compact_and"]) ? (bool) $options["expr_post_process_compact_and"] : true;
-        $compact_or = isset($options["expr_post_process_compact_or"]) ? (bool) $options["expr_post_process_compact_or"] : true;
-        $compact_concat = isset($options["expr_post_process_compact_concat"]) ? (bool) $options["expr_post_process_compact_concat"] : true;
-        $change_case_insensitive_function_name = isset($options["expr_post_process_change_case_insensitive_function_name"]) ? $options["expr_post_process_change_case_insensitive_function_name"] : true;
-        if (!\is_array($change_case_insensitive_function_name)) {
-            $change_case_insensitive_function_name = $change_case_insensitive_function_name ? self::get_clickhouse_case_insensitive_functions() : array();
-        }
-        $case_insensitive_function_name_map = array();
-        foreach ($change_case_insensitive_function_name as $func) {
-            $case_insensitive_function_name_map[\strtoupper($func)] = $func;
-        }
-        if (!$compact_and && !$compact_or && !$compact_concat && !$case_insensitive_function_name_map) {
+        $func = function ($expr, $walker) {
+            $expr = \call_user_func($walker, $expr, true);
+            $expr["type"] = self::type_name($expr["type"]);
             return $expr;
+        };
+        $s = json_encode(self::walker($expr, $func, false), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        $s .= "\n";
+        $s .= static::create($expr);
+        if (!$return) {
+            echo $s;
         }
-        self::internal_expr_post_process($expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
-        return $expr;
+        return $s;
     }
 
-    protected static function internal_expr_post_process(&$expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map)
+    public static function walker($expr, $func, $skip = false)
     {
+        if (!$skip) {
+            $walker = function ($expr, $skip = false) use ($func) {
+                return self::walker($expr, $func, $skip);
+            };
+            return \call_user_func($func, $expr, $walker);
+        }
         switch ($expr["type"]) {
+            case self::T_FUNCTION:
+            case self::T_SQL_UNION_ALL:
+                foreach (["FORMAT_SETTINGS", "sub_tree"] as $key) {
+                    if (isset($expr[$key])) {
+                        foreach ($expr[$key] as &$sub_expr) {
+                            $sub_expr = self::walker($sub_expr, $func, false);
+                        }
+                    }
+                }
+                break;
             case self::T_PARAMETRIC_FUNCTION:
                 foreach ($expr["sub_tree"] as &$sub_tree) {
                     foreach ($sub_tree as &$sub_expr) {
-                        self::internal_expr_post_process($sub_expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
+                        $sub_expr = self::walker($sub_expr, $func, false);
                     }
-                }
-                $upper = \strtoupper($expr["expr"]);
-                if (isset($case_insensitive_function_name_map[$upper])) {
-                    $expr["expr"] = $case_insensitive_function_name_map[$upper];
-                }
-                break;
-            case self::T_FUNCTION:
-                foreach ($expr["sub_tree"] as &$sub_expr) {
-                    self::internal_expr_post_process($sub_expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
-                }
-                unset($sub_expr);
-                $upper = \strtoupper($expr["expr"]);
-                switch ($upper) {
-                    case "AND":
-                        if (!$compact_and) {
-                            break;
-                        }
-                        $sub_tree = array();
-                        foreach ($expr["sub_tree"] as $sub_expr) {
-                            if (self::is_expr_of_function($sub_expr, "and")) {
-                                foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
-                                    $sub_tree[] = $sub_sub_expr;
-                                }
-                            } else {
-                                $sub_tree[] = $sub_expr;
-                            }
-                        }
-                        $sub_tree2 = array();
-                        foreach ($sub_tree as $sub_expr) {
-                            if (!self::is_expr_const_true($sub_expr)) {
-                                $sub_tree2[] = $sub_expr;
-                            }
-                        }
-                        if (\count($sub_tree2) == 0) {
-                            $expr = self::replace_expr($expr, self::$EXP_CONSTANT_1);
-                        } elseif (\count($sub_tree2) == 1) {
-                            $expr = self::replace_expr($expr, $sub_tree2[0]);
-                        } else {
-                            $expr["sub_tree"] = $sub_tree2;
-                        }
-                        break;
-                    case "or":
-                        if (!$compact_or) {
-                            break;
-                        }
-                        $sub_tree = array();
-                        foreach ($expr["sub_tree"] as $sub_expr) {
-                            if (self::is_expr_of_function($sub_expr, "or")) {
-                                foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
-                                    $sub_tree[] = $sub_sub_expr;
-                                }
-                            } else {
-                                $sub_tree[] = $sub_expr;
-                            }
-                        }
-                        $sub_tree2 = array();
-                        foreach ($sub_tree as $sub_expr) {
-                            if (!self::is_expr_const_false($sub_expr)) {
-                                $sub_tree2[] = $sub_expr;
-                            }
-                        }
-                        if (\count($sub_tree2) == 0) {
-                            $expr = self::replace_expr($expr, self::$EXP_CONSTANT_0);
-                        } elseif (\count($sub_tree2) == 1) {
-                            $expr = self::replace_expr($expr, $sub_tree2[0]);
-                        } else {
-                            $expr["sub_tree"] = $sub_tree2;
-                        }
-                        break;
-                    case "concat":
-                        if (!$compact_concat) {
-                            break;
-                        }
-                        $sub_tree = array();
-                        foreach ($expr["sub_tree"] as $sub_expr) {
-                            if (self::is_expr_of_function($sub_expr, "concat")) {
-                                foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
-                                    $sub_tree[] = $sub_sub_expr;
-                                }
-                            } else {
-                                $sub_tree[] = $sub_expr;
-                            }
-                        }
-                        $sub_tree2 = array();
-                        foreach ($sub_tree as $sub_expr) {
-                            if (!self::is_expr_const_empty_string($sub_expr)) {
-                                $sub_tree2[] = $sub_expr;
-                            }
-                        }
-                        if (\count($sub_tree2) == 0) {
-                            $expr = self::replace_expr($expr, self::$EXP_CONSTANT_EMPTY_STRING);
-                        } elseif (\count($sub_tree2) == 1) {
-                            $expr = self::replace_expr($expr, $sub_tree2[0]);
-                        } else {
-                            $expr["sub_tree"] = $sub_tree2;
-                        }
-                        break;
-                }
-                if (isset($case_insensitive_function_name_map[$upper])) {
-                    $expr["expr"] = $case_insensitive_function_name_map[$upper];
                 }
                 break;
             case self::T_SUBEXP:
-            case self::T_SQL_UNION_ALL:
-                foreach ($expr["sub_tree"] as &$sub_expr) {
-                    self::internal_expr_post_process($sub_expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
-                }
-                break;
             case self::T_SUBQUERY:
-                self::internal_expr_post_process($expr["sub_tree"], $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
+                $expr["sub_tree"] = self::walker($expr["sub_tree"], $func, false);
                 break;
             case self::T_SQL_SELECT:
-                foreach (["WITH", "SELECT", "FROM", "ARRAYJOIN", "GROUPBY", "ORDERBY"] as $key) {
+                foreach (["WITH", "SELECT", "FROM", "ARRAYJOIN", "GROUPBY", "ORDERBY", "SETTINGS", "FORMAT_SETTINGS"] as $key) {
                     if (isset($expr[$key])) {
                         foreach ($expr[$key] as &$sub_expr) {
-                            self::internal_expr_post_process($sub_expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
+                            $sub_expr = self::walker($sub_expr, $func, false);
                         }
                     }
                 }
                 foreach (["PREWHERE", "WHERE", "HAVING"] as $key) {
                     if (isset($expr[$key])) {
-                        self::internal_expr_post_process($expr[$key], $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
+                        $expr[$key] = self::walker($expr[$key], $func, false);
                     }
                 }
                 break;
@@ -288,15 +195,175 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         foreach (["using"] as $key) {
             if (isset($expr[$key])) {
                 foreach ($expr[$key] as &$sub_expr) {
-                    self::internal_expr_post_process($sub_expr, $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
+                    $sub_expr = self::walker($sub_expr, $func, false);
                 }
             }
         }
         foreach (["on"] as $key) {
             if (isset($expr[$key])) {
-                self::internal_expr_post_process($expr[$key], $compact_and, $compact_or, $compact_concat, $case_insensitive_function_name_map);
+                $expr[$key] = self::walker($expr[$key], $func, false);
             }
         }
+        return $expr;
+    }
+
+    public static function expr_post_process($expr, $options = array())
+    {
+        $compact_and = isset($options["expr_post_process_compact_and"]) ? (bool) $options["expr_post_process_compact_and"] : true;
+        $compact_or = isset($options["expr_post_process_compact_or"]) ? (bool) $options["expr_post_process_compact_or"] : true;
+        $compact_concat = isset($options["expr_post_process_compact_concat"]) ? (bool) $options["expr_post_process_compact_concat"] : true;
+        $change_case_insensitive_function_name = isset($options["expr_post_process_change_case_insensitive_function_name"]) ? $options["expr_post_process_change_case_insensitive_function_name"] : true;
+        if (!\is_array($change_case_insensitive_function_name)) {
+            $name_list = $change_case_insensitive_function_name ? self::get_clickhouse_case_insensitive_functions() : array();
+        } else {
+            $name_list = $change_case_insensitive_function_name;
+        }
+        if (!$compact_and && !$compact_or && !$compact_concat && !$name_list) {
+            return $expr;
+        }
+        if ($compact_and) {
+            $expr = self::expr_post_process_compact_and($expr);
+        }
+        if ($compact_or) {
+            $expr = self::expr_post_process_compact_or($expr);
+        }
+        if ($compact_concat) {
+            $expr = self::expr_post_process_compact_concat($expr);
+        }
+        if ($name_list) {
+            $expr = self::expr_post_process_change_case_insensitive_function_name($expr, $name_list);
+        }
+        return $expr;
+    }
+
+    public static function expr_post_process_compact_and($expr)
+    {
+        $func = function ($expr, $walker) {
+            $expr = \call_user_func($walker, $expr, true);
+            if (ClickHouseSQLParser::is_expr_of_function($expr, "and")) {
+                $sub_tree = array();
+                foreach ($expr["sub_tree"] as $sub_expr) {
+                    if (!@$sub_expr["alias"] && self::is_expr_of_function($sub_expr, "and")) {
+                        foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
+                            if (!self::is_expr_const_true($sub_expr) || @$sub_expr["alias"]) {
+                                $sub_tree[] = $sub_sub_expr;
+                            }
+                        }
+                    } else {
+                        if (!self::is_expr_const_true($sub_expr) || @$sub_expr["alias"]) {
+                            $sub_tree[] = $sub_expr;
+                        }
+                    }
+                }
+                if (\count($sub_tree) == 0) {
+                    $expr = self::replace_expr($expr, self::$EXP_CONSTANT_1);
+                } elseif (\count($sub_tree) == 1) {
+                    if (@$sub_tree[0]["alias"]) {
+                        $expr = self::replace_expr($expr, self::EXP_SUBEXP($sub_tree[0]));
+                    } else {
+                        $expr = self::replace_expr($expr, $sub_tree[0]);
+                    }
+                } else {
+                    $expr["sub_tree"] = $sub_tree;
+                }
+            }
+            return $expr;
+        };
+        return self::walker($expr, $func, false);
+    }
+
+    public static function expr_post_process_compact_or($expr)
+    {
+        $func = function ($expr, $walker) {
+            $expr = \call_user_func($walker, $expr, true);
+            if (ClickHouseSQLParser::is_expr_of_function($expr, "or")) {
+                $sub_tree = array();
+                foreach ($expr["sub_tree"] as $sub_expr) {
+                    if (!@$sub_expr["alias"] && self::is_expr_of_function($sub_expr, "or")) {
+                        foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
+                            if (!self::is_expr_const_false($sub_expr) || @$sub_expr["alias"]) {
+                                $sub_tree[] = $sub_sub_expr;
+                            }
+                        }
+                    } else {
+                        if (!self::is_expr_const_false($sub_expr) || @$sub_expr["alias"]) {
+                            $sub_tree[] = $sub_expr;
+                        }
+                    }
+                }
+                if (\count($sub_tree) == 0) {
+                    $expr = self::replace_expr($expr, self::$EXP_CONSTANT_0);
+                } elseif (\count($sub_tree) == 1) {
+                    if (@$sub_tree[0]["alias"]) {
+                        $expr = self::replace_expr($expr, self::EXP_SUBEXP($sub_tree[0]));
+                    } else {
+                        $expr = self::replace_expr($expr, $sub_tree[0]);
+                    }
+                } else {
+                    $expr["sub_tree"] = $sub_tree;
+                }
+            }
+            return $expr;
+        };
+        return self::walker($expr, $func, false);
+    }
+
+    public static function expr_post_process_compact_concat($expr)
+    {
+        $func = function ($expr, $walker) {
+            $expr = \call_user_func($walker, $expr, true);
+            if (ClickHouseSQLParser::is_expr_of_function($expr, "concat")) {
+                $sub_tree = array();
+                foreach ($expr["sub_tree"] as $sub_expr) {
+                    if (!@$sub_expr["alias"] && self::is_expr_of_function($sub_expr, "concat")) {
+                        foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
+                            if (!self::is_expr_const_empty_string($sub_expr) || @$sub_expr["alias"]) {
+                                $sub_tree[] = $sub_sub_expr;
+                            }
+                        }
+                    } else {
+                        if (!self::is_expr_const_empty_string($sub_expr) || @$sub_expr["alias"]) {
+                            $sub_tree[] = $sub_expr;
+                        }
+                    }
+                }
+                if (\count($sub_tree) == 0) {
+                    $expr = self::replace_expr($expr, self::$EXP_CONSTANT_EMPTY_STRING);
+                } elseif (\count($sub_tree) == 1) {
+                    if (@$sub_tree[0]["alias"]) {
+                        $expr = self::replace_expr($expr, self::EXP_SUBEXP($sub_tree[0]));
+                    } else {
+                        $expr = self::replace_expr($expr, $sub_tree[0]);
+                    }
+                } else {
+                    $expr["sub_tree"] = $sub_tree;
+                }
+            }
+            return $expr;
+        };
+        return self::walker($expr, $func, false);
+    }
+
+    public static function expr_post_process_change_case_insensitive_function_name($expr, $name_list)
+    {
+        if (!$name_list) {
+            return $expr;
+        }
+        $case_insensitive_function_name_map = array();
+        foreach ($name_list as $func) {
+            $case_insensitive_function_name_map[\strtoupper($func)] = $func;
+        }
+        $func = function ($expr, $walker) use ($case_insensitive_function_name_map) {
+            $expr = \call_user_func($walker, $expr, true);
+            if (ClickHouseSQLParser::is_expr_of($expr, self::T_FUNCTION)) {
+                $upper = \strtoupper($expr["expr"]);
+                if (isset($case_insensitive_function_name_map[$upper])) {
+                    $expr["expr"] = $case_insensitive_function_name_map[$upper];
+                }
+            }
+            return $expr;
+        };
+        return self::walker($expr, $func, false);
     }
 
     //expr_post_process_compact_and => default(1)
@@ -422,11 +489,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 return array(self::mysql_encode_str($p["expr"]) . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_IDENTIFIER_COLREF:
             case self::T_IDENTIFIER_TABLE:
-                $ss = array();
-                foreach ($p["parts"] as $part) {
-                    $ss[] = self::backquote($part, 0, 1);
-                }
-                return array(self::joinStr($p) . \implode(".", $ss) . self::aliasStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::joinStr($p) . self::backquote($p["parts"]) . self::aliasStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
             case self::T_PARAMETRIC_FUNCTION:
                 $s = $p["expr"];
                 foreach ($p["sub_tree"] as $sub_tree) {
@@ -873,7 +936,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 return array($val1, $index);
             }
             $operator  = \is_string($token) ? $token : \strtoupper($token[1]);
-            if ($is_sql && !isset([")" => 1,";"=>1,"UNION" => 1, "FORMAT" => 1][$operator])) {
+            if ($is_sql && !isset([")" => 1, ";" => 1, "UNION" => 1, "FORMAT" => 1][$operator])) {
                 throw new \ErrorException("unexpect token " . self::token_to_string($token));
             }
             $old_index = $index;
@@ -908,6 +971,13 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                             throw new \ErrorException("BUG");
                         }
                         $val1["parts"][] = self::parse_colref($token[1])[0];
+                        $index++;
+                        continue 2;
+                    } elseif (self::is_token_of($token, "*")) {
+                        if (!self::is_expr_of($val1, self::T_IDENTIFIER_COLREF)) {
+                            throw new \ErrorException("BUG");
+                        }
+                        $val1["parts"][] = "";
                         $index++;
                         continue 2;
                     } else {
@@ -980,7 +1050,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                                 if ($token !== ")") {
                                     throw new \ErrorException("sql must in parentheses");
                                 }
-                                if(@$expr["HAS_SEMICOLON"]){
+                                if (@$expr["HAS_SEMICOLON"]) {
                                     throw new \ErrorException("sql must not has semicolon");
                                 }
                                 $val1 = self::EXP_SUBQUERY($expr);
@@ -1210,9 +1280,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         }
                         $val1 = $val1["sub_tree"];
                     }
-                    for(;self::is_token_of($token, ";");$token = @$tokens[++$index]){
+                    for (; self::is_token_of($token, ";"); $token = @$tokens[++$index]) {
                     }
-                    $val1["HAS_SEMICOLON"]=1;
+                    $val1["HAS_SEMICOLON"] = 1;
                     $is_sql = true;
                     continue 2;
                 case "FORMAT":
@@ -1688,4 +1758,54 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         }
         return array($obj, $index);
     }
+    public static function query_set_format(&$query_expr, $format)
+    {
+        if (!isset($format["FORMAT"])) {
+            throw new \ErrorException("BUG");
+        }
+        $query_expr["FORMAT"] = $format["FORMAT"];
+        unset($query_expr["FORMAT_SETTINGS"]);
+        if (isset($format["FORMAT_SETTINGS"])) {
+            $query_expr["FORMAT_SETTINGS"] = $format["FORMAT_SETTINGS"];
+        }
+    }
+
+    public static function query_remove_format(&$query_expr, $default = "TabSeparated")
+    {
+        if (ClickHouseSQLParser::is_expr_of($query_expr, ClickHouseSQLParser::T_SQL_ANY)) {
+            throw new \ErrorException("BUG");
+        }
+        $format = array();
+        if (isset($query_expr["FORMAT"])) {
+            $format["FORMAT"] = $query_expr["FORMAT"];
+            unset($query_expr["FORMAT"]);
+        } elseif ($default !== NULL) {
+            $format["FORMAT"] = $default;
+        } else {
+            return $format;
+        }
+        if (isset($query_expr["FORMAT_SETTINGS"])) {
+            $format["FORMAT_SETTINGS"] = $query_expr["FORMAT_SETTINGS"];
+            unset($query_expr["FORMAT_SETTINGS"]);
+        }
+        $s = " FORMAT " . $format["FORMAT"];
+        if (@$format["FORMAT_SETTINGS"]) {
+            $s .= " SETTINGS ";
+            $k = 0;
+            foreach ($format["FORMAT_SETTINGS"] as $key => $expr) {
+                if ($k++ != 0) {
+                    $s .= ",";
+                }
+                $s .= "$key=" . ClickHouseSQLParser::create($expr);
+            }
+        }
+        $format["toString"] = $s;
+        return $format;
+    }
+
 }
+/*
+$p = ClickHouseSQLParser::parse("select Count(*) from a b final format csv settings a='1',b=2");
+ClickHouseSQLParser::dump_expr($p);
+echo ClickHouseSQLParser::create($p);
+*/
