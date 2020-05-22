@@ -254,10 +254,12 @@ class ClickHouseSQLParserTypes
         return self::$EXP_IDENTIFIER_ASTERISK;
     }
 
-    public static function EXP_IDENTIFIER_COLREF($parts)
+    public static function EXP_IDENTIFIER_COLREF($parts_or_str)
     {
-        if (!is_array($parts)) {
-            $parts = self::parse_colref($parts);
+        if(\is_string($parts_or_str)){
+            $parts=self::parse_colref($parts_or_str);
+        }else{
+            $parts=$parts_or_str;
         }
         if (\count($parts) === 0) {
             throw new \ErrorException("colref cannot be empty");
@@ -269,35 +271,51 @@ class ClickHouseSQLParserTypes
         );
     }
 
-    public static function get_identifier_backquote_name($expr)
+    public static function get_identifier_backquote_name($expr_or_parts_or_str)
     {
-        if (!self::is_expr_of($expr, self::T_IDENTIFIER)) {
-            throw new \ErrorException("not a T_IDENTIFIER");
+        if(\is_string($expr_or_parts_or_str)){
+            $parts=self::parse_colref($expr_or_parts_or_str);
+        }elseif(isset($expr_or_parts_or_str["type"])){
+            if (!self::is_expr_of($expr_or_parts_or_str, self::T_IDENTIFIER)) {
+                throw new \ErrorException("not a T_IDENTIFIER");
+            }
+            if (self::is_expr_of($expr_or_parts_or_str, self::T_IDENTIFIER_ASTERISK)) {
+                return "*";
+            }
+            $parts=$expr_or_parts_or_str["parts"];
+        }else{
+            $parts=$expr_or_parts_or_str;
         }
-        if (self::is_expr_of($expr, self::T_IDENTIFIER_ASTERISK)) {
-            return "*";
-        }
-        return self::backquote($expr["parts"]);
+        return self::backquote($parts);
     }
 
-    public static function get_one_part_identifier_name($expr)
+    public static function get_one_part_identifier_name($expr_or_parts_or_str)
     {
-        if (!self::is_expr_of($expr, self::T_IDENTIFIER)) {
-            throw new \ErrorException("not a T_IDENTIFIER");
+        if(\is_string($expr_or_parts_or_str)){
+            $parts=self::parse_colref($expr_or_parts_or_str);
+        }elseif(isset($expr_or_parts_or_str["type"])){
+            if (!self::is_expr_of($expr_or_parts_or_str, self::T_IDENTIFIER)) {
+                throw new \ErrorException("not a T_IDENTIFIER");
+            }
+            if (self::is_expr_of($expr_or_parts_or_str, self::T_IDENTIFIER_ASTERISK)) {
+                return "*";
+            }
+            $parts=$expr_or_parts_or_str["parts"];
+        }else{
+            $parts=$expr_or_parts_or_str;
         }
-        if (self::is_expr_of($expr, self::T_IDENTIFIER_ASTERISK)) {
-            return "*";
-        }
-        if (\count($expr["parts"]) > 1) {
+        if (\count($parts) > 1) {
             return false;
         }
-        return $expr["parts"][0];
+        return $parts[0];
     }
 
-    public static function EXP_IDENTIFIER_TABLE($parts)
+    public static function EXP_IDENTIFIER_TABLE($parts_or_str)
     {
-        if (!is_array($parts)) {
-            $parts = self::parse_colref($parts);
+        if(\is_string($parts_or_str)){
+            $parts=self::parse_colref($parts_or_str);
+        }else{
+            $parts=$parts_or_str;
         }
         if (\count($parts) === 0) {
             throw new \ErrorException("table cannot be empty");

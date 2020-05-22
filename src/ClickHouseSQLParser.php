@@ -245,7 +245,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 foreach ($expr["sub_tree"] as $sub_expr) {
                     if (!@$sub_expr["alias"] && self::is_expr_of_function($sub_expr, "and")) {
                         foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
-                            if (!self::is_expr_const_true($sub_expr) || @$sub_expr["alias"]) {
+                            if (!self::is_expr_const_true($sub_sub_expr) || @$sub_sub_expr["alias"]) {
                                 $sub_tree[] = $sub_sub_expr;
                             }
                         }
@@ -269,7 +269,8 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
             }
             return $expr;
         };
-        return self::walker($expr, $func, false);
+        $expr = self::walker($expr, $func, false);
+        return $expr;
     }
 
     public static function expr_post_process_compact_or($expr)
@@ -281,7 +282,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                 foreach ($expr["sub_tree"] as $sub_expr) {
                     if (!@$sub_expr["alias"] && self::is_expr_of_function($sub_expr, "or")) {
                         foreach ($sub_expr["sub_tree"] as $sub_sub_expr) {
-                            if (!self::is_expr_const_false($sub_expr) || @$sub_expr["alias"]) {
+                            if (!self::is_expr_const_false($sub_sub_expr) || @$sub_sub_expr["alias"]) {
                                 $sub_tree[] = $sub_sub_expr;
                             }
                         }
@@ -473,29 +474,34 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         }
     }
 
+    protected static function exprStr($p, $s)
+    {
+        return self::joinStr($p) . $s . self::aliasStr($p) . self::orderStr($p) . self::usingStr($p) . self::onStr($p);
+    }
+
     private static function create2($p)
     {
         switch ($p["type"]) {
             case self::T_CONSTANT_NULL:
-                return array("NULL" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::exprStr($p, "NULL"), (self::hasAlias($p) ? 0 : 100));
             case self::T_IDENTIFIER_ASTERISK:
-                return array("*" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::exprStr($p, "*"), (self::hasAlias($p) ? 0 : 100));
             case self::T_CONSTANT_LNUMBER:
             case self::T_CONSTANT_DNUMBER:
-                return array($p["expr"] . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::exprStr($p, $p["expr"]), (self::hasAlias($p) ? 0 : 100));
             case self::T_EXP_ANY:
-                return array("(" . $p["expr"] . ")" . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::exprStr($p, "(" . $p["expr"] . ")"), (self::hasAlias($p) ? 0 : 100));
             case self::T_CONSTANT_STRING:
-                return array(self::mysql_encode_str($p["expr"]) . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::exprStr($p, self::mysql_encode_str($p["expr"])), (self::hasAlias($p) ? 0 : 100));
             case self::T_IDENTIFIER_COLREF:
             case self::T_IDENTIFIER_TABLE:
-                return array(self::joinStr($p) . self::backquote($p["parts"]) . self::aliasStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::exprStr($p, self::backquote($p["parts"])), (self::hasAlias($p) ? 0 : 100));
             case self::T_PARAMETRIC_FUNCTION:
                 $s = $p["expr"];
                 foreach ($p["sub_tree"] as $sub_tree) {
                     $s .= self::create2(self::EXP_FUNCTION("", $sub_tree))[0];
                 }
-                return array($s . self::aliasStr($p) . self::orderStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::exprStr($p, $s), (self::hasAlias($p) ? 0 : 100));
             case self::T_FUNCTION:
                 if ($p["expr"] == "tuple") {
                     $p["expr"] = "";
@@ -674,10 +680,10 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     }
                     $precedence = 0;
                 }
-                return array($s . self::aliasStr($p) . self::orderStr($p), $precedence);
+                return array(self::exprStr($p, $s), $precedence);
             case self::T_SUBEXP:
             case self::T_SUBQUERY:
-                return array(self::joinStr($p) . "(" . self::create2($p["sub_tree"])[0] . ")" . self::aliasStr($p) . self::orderStr($p) . self::usingStr($p) . self::onStr($p), (self::hasAlias($p) ? 0 : 100));
+                return array(self::exprStr($p, "(" . self::create2($p["sub_tree"])[0] . ")"), (self::hasAlias($p) ? 0 : 100));
             case self::T_SQL_ANY:
                 return array($p["expr"], 0);
             case self::T_SQL_UNION_ALL:
@@ -748,7 +754,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                                     }
                                     $s .= self::create2($expr2)[0];
                                 }
-                                $s .= " ";
+                                //$s .= " ";
                             }
                         }
                     }
@@ -1374,7 +1380,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                         if (self::hasAlias($val2)) {
                             throw new \ErrorException("the (QUERY) used in UNION ALL cannot has alias");
                         }
-                        $val2 = $val1["sub_tree"];
+                        $val2 = $val2["sub_tree"];
                     }
                     if (isset($val2["FORMAT"])) {
                         throw new \ErrorException("the (QUERY) used in UNION ALL cannot has format");
@@ -1560,8 +1566,9 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
                     if (!self::is_token_of($token, "JOIN")) {
                         throw new \ErrorException("expect 'JOIN' after '{$join["type"]}' got " . self::token_to_string($token));
                     }
+                    $token = @$tokens[++$index];
                 }
-                F5: list($expr, $index) = self::get_next_expr($tokens, $index + 1, 0);
+                F5: list($expr, $index) = self::get_next_expr($tokens, $index, 0);
                 // if(@$join["strictness"]==="ALL"){
                 //     unset($join["strictness"]);
                 // }
@@ -1802,7 +1809,6 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         $format["toString"] = $s;
         return $format;
     }
-
 }
 /*
 $p = ClickHouseSQLParser::parse("select Count(*) from a b final format csv settings a='1',b=2");
