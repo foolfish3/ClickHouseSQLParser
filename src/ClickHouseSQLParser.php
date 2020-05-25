@@ -73,7 +73,7 @@ class ClickHouseSQLParser extends ClickHouseSQLParserTokenizer
         "WHERE" => 1, "PREWHERE" => 1, "ORDER" => 1, "LIMIT" => 1, "CROSS" => 1,
         "INNER" => 1, "LEFT" => 1, "RIGHT" => 1, "FULL" => 1, "JOIN" => 1,
         "ON" => 1, "USING" => 1, "ARRAY" => 1, "ALL" => 1, "ANY" => 1, "ASOF" => 1,
-        "UNION" => 1, "GLOBAL" => 1, "FORMAT" => 1,
+        "UNION" => 1, "GLOBAL" => 1, "FORMAT" => 1,"GROUP"=>1,"SETTINGS"=>1
     );
 
     protected static $interval_map = array(
