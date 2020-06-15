@@ -1924,6 +1924,7 @@ class ClickHouseSQLParser
                 case "-":
                 case "*":
                 case "/":
+                case "%":
                 case "||":
                     $operator = self::$operator_to_function_map[$operator];
                     F2: if (self::$precedence_map[$operator] <= $precedence) {
