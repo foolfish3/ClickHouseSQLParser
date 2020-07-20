@@ -47,59 +47,48 @@ class ClickHouseSQLParserExt extends ClickHouseSQLParser
     //step 2
     protected static function parse_impl($sql, $options = array())
     {
-        if ($expr = self::check_and_parse_select($sql, $options)) {
-        } elseif (preg_match("{^\\s*SHOW\\s}si", $sql)) {
-            $options["tokens_post_process_check_error_and_remove_blank"] = 1;
-            $tokens = self::token_get_all($sql, $options);
+        $options["tokens_post_process_check_error_and_remove_blank"] = 1;
+        $tokens = self::token_get_all($sql, $options);
+        if(count($tokens)==0){
+            throw new \ErrorException("cannot parse as sql, empty string");
+        }
+        if ($expr = self::check_and_parse_select($tokens)) {
+        } elseif (self::is_token_of($tokens[0],"SHOW")) {
             list($expr, $index) = self::get_next_show($tokens, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
             }
-        } elseif (preg_match("{^\\s*DESC\\s}si", $sql)) {
-            $options["tokens_post_process_check_error_and_remove_blank"] = 1;
-            $tokens = self::token_get_all($sql, $options);
+        } elseif (self::is_token_of($tokens[0],"DESC")) {
             list($expr, $index) = self::get_next_desc($tokens, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
             }
-        } elseif (preg_match("{^\\s*DROP\\s}si", $sql)) {
-            $options["tokens_post_process_check_error_and_remove_blank"] = 1;
-            $tokens = self::token_get_all($sql, $options);
+        } elseif (self::is_token_of($tokens[0],"DROP")) {
             list($expr, $index) = self::get_next_drop($tokens, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
             }
-        } elseif (preg_match("{^\\s*TRUNCATE\\s}si", $sql)) {
-            $options["tokens_post_process_check_error_and_remove_blank"] = 1;
-            $tokens = self::token_get_all($sql, $options);
+        } elseif (self::is_token_of($tokens[0],"TRUNCATE")) {
             list($expr, $index) = self::get_next_truncate($tokens, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
             }
-        } elseif (preg_match("{^\\s*CREATE\\s+DATABASE\\s}si", $sql)) {
-            $options["tokens_post_process_check_error_and_remove_blank"] = 1;
-            $tokens = self::token_get_all($sql, $options);
+        } elseif (self::is_token_of($tokens[0],"CREATE") && self::is_token_of(@$tokens[1],"DATABASE")) {
             list($expr, $index) = self::get_next_create_database($tokens, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
             }
-        } elseif (preg_match("{^\\s*USE\\s}si", $sql)) {
-            $options["tokens_post_process_check_error_and_remove_blank"] = 1;
-            $tokens = self::token_get_all($sql, $options);
+        } elseif (self::is_token_of($tokens[0],"USE")) {
             list($expr, $index) = self::get_next_use($tokens, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
             }
-        } elseif (preg_match("{^\\s*CREATE\\s+TEMPORARY\\s+TABLE\\s}si", $sql)) {
-            $options["tokens_post_process_check_error_and_remove_blank"] = 1;
-            $tokens = self::token_get_all($sql, $options);
+        } elseif (self::is_token_of($tokens[0],"CREATE") && self::is_token_of(@$tokens[1],"TEMPORARY")&& self::is_token_of(@$tokens[2],"TABLE")) {
             list($expr, $index) = self::get_next_create_temporary_table_as($tokens, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
             }
-        } elseif (preg_match("{^\\s*EXPLAIN\\s}si", $sql)) {
-            $options["tokens_post_process_check_error_and_remove_blank"] = 1;
-            $tokens = self::token_get_all($sql, $options);
+        } elseif (self::is_token_of($tokens[0],"EXPLAIN")) {
             list($expr, $index) = self::get_next_explain($tokens, 0);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
