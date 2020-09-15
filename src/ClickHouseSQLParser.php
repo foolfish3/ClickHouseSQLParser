@@ -1074,9 +1074,11 @@ class ClickHouseSQLParser
         return self::walker($expr, $func, false);
     }
 
-    protected static function check_and_parse_select($tokens)
+    protected static function check_and_parse_select($sql, $options)
     {
-        if (self::is_token_of($tokens[0],"SELECT")||self::is_token_of($tokens[0],"WITH")) {
+        if (preg_match("{^[\\s(]*(?:WITH|SELECT)\\s}si", $sql)) {
+            $options["tokens_post_process_check_error_and_remove_blank"] = 1;
+            $tokens = self::token_get_all($sql, $options);
             list($expr, $index) = self::get_next_expr($tokens, 0, 0, true);
             if ($index != \count($tokens)) {
                 throw new \ErrorException("cannot parse as sql, some token left");
@@ -1095,12 +1097,7 @@ class ClickHouseSQLParser
     //expr_post_process_change_case_insensitive_function_name => default(1)
     protected static function parse_impl($sql, $options = array())
     {
-        $options["tokens_post_process_check_error_and_remove_blank"] = 1;
-        $tokens = self::token_get_all($sql, $options);
-        if(count($tokens)==0){
-            throw new \ErrorException("cannot parse as sql, empty string");
-        }
-        if ($expr = self::check_and_parse_select($tokens)) {
+        if ($expr = self::check_and_parse_select($sql, $options)) {
             $expr = self::expr_post_process($expr, $options);
             return $expr;
         } else {
@@ -1138,6 +1135,9 @@ class ClickHouseSQLParser
     {
         $s = "";
         if (self::hasAlias($p)) {
+            if(self::is_expr_of($p,self::T_IDENTIFIER_COLREF) && \count($p["parts"])==1 && $p["parts"][0]===$p["alias"]){
+                return $s;
+            }
             $s .= " AS " . self::backquote($p["alias"]);
         }
         return $s;
