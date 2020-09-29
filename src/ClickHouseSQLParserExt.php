@@ -52,7 +52,7 @@ class ClickHouseSQLParserExt extends ClickHouseSQLParser
         if(count($tokens)==0){
             throw new \ErrorException("cannot parse as sql, empty string");
         }
-        if ($expr = self::check_and_parse_select($tokens)) {
+        if ($expr = self::check_and_parse_select($sql,$options)) {
         } elseif (self::is_token_of($tokens[0],"SHOW")) {
             list($expr, $index) = self::get_next_show($tokens, 0);
             if ($index != \count($tokens)) {

@@ -643,6 +643,7 @@ class ClickHouseSQLParser
         $tokens = array();
         if ($dont_allow_comment) {
             \preg_match_all("{[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*|\\`(?:[^\\`\\\\]|\\\\.)*\\`|\\\"(?:[^\\\"\\\\]|\\\\.)*\\\"|\\'(?:[^\\'\\\\]|\\\\.)*\\'|\\s+|\\d+(?:\\.\\d*)?(?:[Ee][\\+\\-]?\\d+)?|\\<\\=\\>|\\!\\=|\\>\\=|\\<\\=|\\<\\>|\\<\\<|\\>\\>|\\:\\=|&&|\\|\\||@@|\\-\\>|.}s", $str, $m);
+            
             foreach ($m[0] as $token) {
                 switch (isset($map[$token[0]]) ? $map[$token[0]] : -1) {
                     case 1:
@@ -661,7 +662,11 @@ class ClickHouseSQLParser
                         $tokens[] = array(self::T_WHITESPACE, $token);
                         break;
                     case 9:
-                        $tokens[] = array(self::T_IDENTIFIER_NOQUOTE, $token);
+                        if(strcasecmp($token,"NULL")==0){
+                            $tokens[] = array(self::T_CONSTANT_NULL,$token);
+                        }else{
+                            $tokens[] = array(self::T_IDENTIFIER_NOQUOTE, $token);
+                        }
                         break;
                     default:
                         $tokens[] = $token;
@@ -693,7 +698,11 @@ class ClickHouseSQLParser
                         $tokens[] = array(self::T_WHITESPACE, $token);
                         break;
                     case 9:
-                        $tokens[] = array(self::T_IDENTIFIER_NOQUOTE, $token);
+                        if(strcasecmp($token,"NULL")==0){
+                            $tokens[] = array(self::T_CONSTANT_NULL,$token);
+                        }else{
+                            $tokens[] = array(self::T_IDENTIFIER_NOQUOTE, $token);
+                        }
                         break;
                     default:
                         $tokens[] = $token;
