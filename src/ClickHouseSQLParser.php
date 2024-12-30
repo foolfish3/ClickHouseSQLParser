@@ -1513,7 +1513,7 @@ class ClickHouseSQLParser
                                 $s .= " FINAL";
                             }
                             if (@$p["ARRAYJOIN"]) {
-                                if (@$p["OPTION_SELECT_DISTINCT"]) {
+                                if (@$p["OPTION_ARRAYJOIN_LEFT"]) {
                                     $s .= " LEFT";
                                 }
                                 $s .= " ARRAY JOIN ";
@@ -2384,8 +2384,17 @@ class ClickHouseSQLParser
                 if (self::is_token_of($token, "USING")) {
                     $expr["using"] = array();
                     $index++;
-                    for (;;) {
-                        list($expr2, $index) = self::get_next_expr($tokens, $index, 0);
+                    $token = @$tokens[$index];
+                    for ($quote_cnt = 0; ;) {
+                        if (!self::is_token_of($token, "(")) {
+                            break;
+                        }
+                        $index++;
+                        $token = @$tokens[$index];
+                        $quote_cnt++;
+                    }
+                    for (; ;) {
+                        list($expr2, $index) = self::get_next_expr($tokens, $index, 0, false);
                         $expr["using"][] = $expr2;
                         $token = @$tokens[$index];
                         if ($token === ",") {
@@ -2394,9 +2403,36 @@ class ClickHouseSQLParser
                             break;
                         }
                     }
+                    for (; $quote_cnt > 0;) {
+                        if (!self::is_token_of($token, ")")) {
+                            throw new ClickHouseSQLParserParseError("expect ')' got " . self::token_to_string($token));
+                        }
+                        $index++;
+                        $token = @$tokens[$index];
+                        $quote_cnt--;
+                    }
                 } elseif (self::is_token_of($token, "ON")) {
-                    list($expr2, $index) = self::get_next_expr($tokens, $index + 1, 0);
+                    $index++;
+                    $token = @$tokens[$index];
+                    for ($quote_cnt = 0; ;) {
+                        if (!self::is_token_of($token, "(")) {
+                            break;
+                        }
+                        $index++;
+                        $token = @$tokens[$index];
+                        $quote_cnt++;
+                    }
+                    list($expr2, $index) = self::get_next_expr($tokens, $index, 0, false);
+                    $token = @$tokens[$index];
                     $expr["on"] = $expr2;
+                    for (; $quote_cnt > 0;) {
+                        if (!self::is_token_of($token, ")")) {
+                            throw new ClickHouseSQLParserParseError("expect ')' got " . self::token_to_string($token));
+                        }
+                        $index++;
+                        $token = @$tokens[$index];
+                        $quote_cnt--;
+                    }
                 } else {
                     throw new \ErrorException("expect 'USING' or 'ON' after '{$join["type"]}' got " . self::token_to_string($token));
                 }
